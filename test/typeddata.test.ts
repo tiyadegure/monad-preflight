@@ -274,9 +274,9 @@ describe('explainTypedData — generic', () => {
     expect(noteBullet).toBe(`note: ${'x'.repeat(60)}…`);
   });
 
-  it('shows at most 8 top-level message fields', () => {
+  it('caps how many message fields it lists, and says so when it truncates', () => {
     const message: Record<string, string> = {};
-    for (let i = 0; i < 12; i += 1) message[`field${i}`] = `value${i}`;
+    for (let i = 0; i < 20; i += 1) message[`field${i}`] = `value${i}`;
     const res = ok(
       explainTypedData(
         { types: {}, primaryType: 'Big', domain: {}, message },
@@ -284,7 +284,11 @@ describe('explainTypedData — generic', () => {
       ),
     );
     const fieldBullets = res.bullets.filter((b) => /^field\d+: /.test(b));
-    expect(fieldBullets).toHaveLength(8);
+    expect(fieldBullets).toHaveLength(12);
+    // Truncation must be disclosed — never silently hide part of what is
+    // being signed while telling the user to read it all.
+    expect(res.bullets.join(' ')).toMatch(/8 more fields not shown/);
+    expect(res.outcome).not.toMatch(/Read every field below/);
   });
 });
 

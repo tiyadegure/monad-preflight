@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   Address,
   Hex,
@@ -106,6 +106,14 @@ interface Plan {
   riskContext: RiskContext;
   /** Extra findings from counterparty reputation, re-applied on re-check. */
   reputationFindings: RiskFinding[];
+  /**
+   * The network this plan was built and simulated against. A plan is only
+   * meaningful on its own chain: token addresses, balances and gas all
+   * come from there. Signing must refuse if the app has moved on.
+   */
+  builtFor: NetworkKey;
+  /** The account it was built for — likewise not transferable. */
+  builtBy: Address;
 }
 
 const LS_API_KEY = 'preflight.apiKey';
@@ -113,9 +121,33 @@ const LS_AI_PROXY = 'preflight.aiProxyUrl';
 const LS_NETWORK = 'preflight.network';
 const tokensKey = (net: NetworkKey) => `preflight.tokens.${net}`;
 
+/**
+ * Every storage access is guarded. Browsers in private mode, with storage
+ * disabled, or over quota throw on plain `localStorage.getItem` — and an
+ * unguarded throw inside a useState initializer takes the whole app down
+ * to the error boundary. PreFlight must still work with no storage at all;
+ * the user just loses their saved settings.
+ */
+function readStored(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeStored(key: string, value: string | null): void {
+  try {
+    if (value === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, value);
+  } catch {
+    // Storage unavailable or full — the in-memory state is still correct.
+  }
+}
+
 function loadTokens(net: NetworkKey): TokenInfo[] {
   try {
-    const raw = localStorage.getItem(tokensKey(net));
+    const raw = readStored(tokensKey(net));
     return raw ? (JSON.parse(raw) as TokenInfo[]) : [];
   } catch {
     return [];
@@ -138,7 +170,7 @@ export default function App() {
   );
 
   const [networkKey, setNetworkKey] = useState<NetworkKey>(() => {
-    const stored = localStorage.getItem(LS_NETWORK);
+    const stored = readStored(LS_NETWORK);
     return isNetworkKey(stored) ? stored : DEFAULT_NETWORK;
   });
   const network = NETWORKS[networkKey];
@@ -152,9 +184,9 @@ export default function App() {
   const [balanceWei, setBalanceWei] = useState<bigint | null>(null);
   const [connecting, setConnecting] = useState(false);
 
-  const [apiKey, setApiKey] = useState(() => localStorage.getItem(LS_API_KEY) ?? '');
+  const [apiKey, setApiKey] = useState(() => readStored(LS_API_KEY) ?? '');
   const [aiProxyUrl, setAiProxyUrl] = useState(
-    () => localStorage.getItem(LS_AI_PROXY) ?? '',
+    () => readStored(LS_AI_PROXY) ?? '',
   );
   const aiAvailable = Boolean(apiKey || aiProxyUrl);
   const [tokens, setTokens] = useState<TokenInfo[]>(() => loadTokens(networkKey));
@@ -180,6 +212,21 @@ export default function App() {
 
   const registry = useMemo(() => createRegistry(tokens), [tokens]);
 
+  /**
+   * Monotonic id for the in-flight prepare. Preparing takes seconds
+   * (simulate + several chain reads + an optional AI call); if the user
+   * switches network or starts another prepare in that window, the older
+   * promise must not be allowed to install its result over the newer
+   * state. Every prepare captures the id it started with and discards
+   * itself if the world moved on.
+   */
+  const prepareRun = useRef(0);
+  /** Current network, readable from inside an in-flight async prepare. */
+  const networkKeyRef = useRef(networkKey);
+  useEffect(() => {
+    networkKeyRef.current = networkKey;
+  }, [networkKey]);
+
   const refreshBalance = useCallback(
     (addr: Address | null) => {
       if (!addr) return setBalanceWei(null);
@@ -198,7 +245,24 @@ export default function App() {
     getConnectedAccount(provider).then(setAccount);
     getWalletChainId(provider).then(setWalletChainId).catch(() => {});
     const offAccounts = onAccountsChanged(provider, (accounts) => {
-      setAccount(accounts[0] ?? null);
+      const next = accounts[0] ?? null;
+      setAccount((current) => {
+        // A plan is built for one specific account. If the wallet switches
+        // users, that plan is no longer theirs — drop it rather than leave
+        // a signable transaction belonging to someone else on screen.
+        if (current && next?.toLowerCase() !== current.toLowerCase()) {
+          setPlan(null);
+          setPostflight(null);
+          setTxHash(null);
+          setDrift(null);
+          setScan(null);
+          setPhase('idle');
+          setErrorMsg(
+            'Your wallet switched accounts, so the prepared transaction was cleared. Prepare it again if you still want it.',
+          );
+        }
+        return next;
+      });
     });
     const offChain = onChainChanged(provider, (hex) => {
       setWalletChainId(Number.parseInt(hex, 16));
@@ -213,12 +277,24 @@ export default function App() {
     refreshBalance(account);
   }, [account, refreshBalance]);
 
-  // A shared link pre-fills the console — never auto-signs, never auto-runs.
+  /**
+   * A shared link pre-fills the console — it never prepares, never signs.
+   *
+   * It also never silently moves the user to a different network: a link
+   * that flipped someone to mainnet without them noticing would turn a
+   * "look at this" into real-money exposure. We fill the text, and if the
+   * link names another network we say so and let the user switch.
+   */
+  const [sharedNetworkHint, setSharedNetworkHint] = useState<NetworkKey | null>(null);
   useEffect(() => {
     const shared = decodeShareLink(window.location.href);
     if (!shared) return;
     setInput(shared.text);
-    if (isNetworkKey(shared.network)) setNetworkKey(shared.network);
+    if (isNetworkKey(shared.network) && shared.network !== networkKey) {
+      setSharedNetworkHint(shared.network);
+    }
+    // Intentionally runs once on mount: a link only ever seeds the console.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const resetFlight = useCallback(() => {
@@ -234,8 +310,11 @@ export default function App() {
 
   const handleSelectNetwork = (key: NetworkKey) => {
     if (key === networkKey) return;
+    // Invalidate any prepare still in flight before the state changes.
+    prepareRun.current += 1;
+    networkKeyRef.current = key;
     setNetworkKey(key);
-    localStorage.setItem(LS_NETWORK, key);
+    writeStored(LS_NETWORK, key);
     setTokens(loadTokens(key));
     setFlights(loadFlights(key));
     setScan(null);
@@ -277,20 +356,18 @@ export default function App() {
 
   const handleApiKeyChange = (key: string) => {
     setApiKey(key);
-    if (key) localStorage.setItem(LS_API_KEY, key);
-    else localStorage.removeItem(LS_API_KEY);
+    writeStored(LS_API_KEY, key || null);
   };
 
   const handleAiProxyUrlChange = (url: string) => {
     setAiProxyUrl(url);
-    if (url) localStorage.setItem(LS_AI_PROXY, url);
-    else localStorage.removeItem(LS_AI_PROXY);
+    writeStored(LS_AI_PROXY, url || null);
   };
 
   const persistTokens = useCallback(
     (list: TokenInfo[]) => {
       setTokens(list);
-      localStorage.setItem(tokensKey(networkKey), JSON.stringify(list));
+      writeStored(tokensKey(networkKey), JSON.stringify(list));
     },
     [networkKey],
   );
@@ -317,6 +394,13 @@ export default function App() {
   const prepareFromText = useCallback(
     async (rawText: string) => {
       if (!account) return;
+      // Claim this run. Anything started later wins; this one goes quiet.
+      const runId = ++prepareRun.current;
+      const runNetwork = networkKey;
+      const runAccount = account;
+      const isStale = () =>
+        prepareRun.current !== runId || networkKeyRef.current !== runNetwork;
+
       setView('fly');
       setPhase('planning');
       setPlan(null);
@@ -473,6 +557,11 @@ export default function App() {
           }
         }
 
+        // The world may have moved while we were working. Never install a
+        // stale plan over newer state — it would show a plan built for one
+        // chain (or one account) under another's header.
+        if (isStale()) return;
+
         setPlan({
           tx,
           sim,
@@ -484,10 +573,13 @@ export default function App() {
           counterparty,
           riskContext: ctx,
           reputationFindings,
+          builtFor: runNetwork,
+          builtBy: runAccount,
         });
         setDrift(null);
         setPhase('ready');
       } catch (err) {
+        if (isStale()) return;
         setErrorMsg(plainError(err));
         setPhase('idle');
       }
@@ -521,6 +613,28 @@ export default function App() {
    */
   const handleSign = useCallback(async (force = false) => {
     if (!plan || !provider) return;
+
+    // Last line of defence against signing a plan that belongs to another
+    // chain or another account. The prepare path already discards stale
+    // results, but this check is what makes it impossible rather than
+    // unlikely — the consequence would be broadcasting testnet-derived
+    // calldata against mainnet funds.
+    if (plan.builtFor !== networkKey) {
+      setErrorMsg(
+        `This plan was prepared on ${NETWORKS[plan.builtFor].label} but you are now on ` +
+          `${network.label}. Prepare it again so it can be checked against the network you are actually using.`,
+      );
+      setPhase('ready');
+      return;
+    }
+    if (account && plan.builtBy.toLowerCase() !== account.toLowerCase()) {
+      setErrorMsg(
+        'This plan was prepared for a different account than your wallet is using now. Prepare it again.',
+      );
+      setPhase('ready');
+      return;
+    }
+
     setPhase('signing');
     setErrorMsg(null);
 
@@ -759,6 +873,27 @@ export default function App() {
 
       {view === 'fly' && (
         <>
+          {sharedNetworkHint && (
+            <div className="error-note" role="status">
+              This link was shared for {NETWORKS[sharedNetworkHint].label}, but you are on{' '}
+              {network.label}. We did not switch for you.
+              <div className="sign-bar">
+                <button
+                  className="btn-ghost"
+                  onClick={() => {
+                    handleSelectNetwork(sharedNetworkHint);
+                    setSharedNetworkHint(null);
+                  }}
+                >
+                  Switch to {NETWORKS[sharedNetworkHint].label}
+                </button>
+                <button className="btn-ghost" onClick={() => setSharedNetworkHint(null)}>
+                  Stay on {network.label}
+                </button>
+              </div>
+            </div>
+          )}
+
           <IntentConsole
             value={input}
             busy={phase === 'planning'}

@@ -219,7 +219,13 @@ function explainPermit(
   const bullets = [
     `Who can spend: ${spender}`,
     `How much: ${describeAmount(amount, unlimited)}`,
-    `Valid until: ${formatUnixSeconds(deadline)}`,
+    // The deadline bounds when the SIGNATURE can be redeemed — it does not
+    // bound the permission it creates. Once redeemed, the spending
+    // permission sits on the token forever until revoked. Saying "valid
+    // until" alone would leave people thinking it expires on its own.
+    `Signature must be used by: ${formatUnixSeconds(deadline)}`,
+    'Important: that date limits when this signature can be used — not how long ' +
+      'the permission lasts. Once used, the permission stays open until you revoke it.',
   ];
   if (domain.verifyingContract) bullets.push(`Token contract: ${domain.verifyingContract}`);
 
@@ -228,8 +234,9 @@ function explainPermit(
     headline: PERMIT_HEADLINE,
     outcome:
       `If you sign, ${spender} becomes allowed to take ${unlimited ? 'any amount' : 'up to the stated amount'} ` +
-      'of this token from your wallet until the deadline. Signing is free and moves nothing right now — ' +
-      'the effect kicks in whenever the spender chooses to use your signature.',
+      'of this token from your wallet. Signing is free and moves nothing right now — the effect kicks in ' +
+      'whenever the spender chooses to use your signature, and the permission it creates does not expire ' +
+      'on its own.',
     bullets,
     risks,
     domain,
@@ -351,11 +358,15 @@ function explainPermit2(
   };
 }
 
+/** Fields we always show in full, even past the display cap. */
+const MAX_SHOWN_FIELDS = 12;
+
 function explainGeneric(
   message: Rec,
   domain: TypedDataExplanation['domain'],
   risks: RiskFinding[],
   primaryType: string | undefined,
+  declaredFields: string[] | null = null,
 ): TypedDataExplanation {
   const bullets: string[] = [];
   if (primaryType) bullets.push(`Type of data: ${primaryType}`);
@@ -363,8 +374,24 @@ function explainGeneric(
   if (domain.verifyingContract) {
     bullets.push(`Contract that will check this signature: ${domain.verifyingContract}`);
   }
-  for (const [key, value] of Object.entries(message).slice(0, 8)) {
-    bullets.push(`${key}: ${truncate(stringifyValue(value), 60)}`);
+
+  const entries = Object.entries(message);
+  for (const [key, value] of entries.slice(0, MAX_SHOWN_FIELDS)) {
+    // Mark fields the wallet will not actually sign, so a decoy cannot
+    // read as part of the deal.
+    const ignored =
+      declaredFields !== null && !declaredFields.includes(key)
+        ? ' — your wallet will NOT sign this field'
+        : '';
+    bullets.push(`${key}: ${truncate(stringifyValue(value), 60)}${ignored}`);
+  }
+  // Never tell the user to "read every field" while hiding some of them.
+  const hidden = entries.length - MAX_SHOWN_FIELDS;
+  if (hidden > 0) {
+    bullets.push(
+      `…and ${hidden} more field${hidden === 1 ? '' : 's'} not shown here. ` +
+        'Because we cannot show you all of it, treat this request as unreviewed.',
+    );
   }
 
   risks.push(signatureCanMoveFundsRisk());
@@ -374,11 +401,30 @@ function explainGeneric(
     headline: GENERIC_HEADLINE,
     outcome:
       'We could not match this request to a known pattern, so we cannot say exactly what signing it will do. ' +
-      'Read every field below and make sure it matches what the app told you before you sign.',
+      (hidden > 0
+        ? 'It also has more fields than we can display. '
+        : 'Read every field below and make sure it matches what the app told you before you sign.'),
     bullets,
     risks,
     domain,
   };
+}
+
+/**
+ * The field names the wallet will actually hash for `primaryType`.
+ * Returns null when the request does not declare a usable type list — in
+ * that case we cannot cross-check, and callers must stay on the cautious
+ * generic path rather than assume agreement.
+ */
+function declaredFieldNames(types: unknown, primaryType: string | undefined): string[] | null {
+  if (!primaryType || !isRecord(types)) return null;
+  const fields = types[primaryType];
+  if (!Array.isArray(fields) || fields.length === 0) return null;
+  const names: string[] = [];
+  for (const field of fields) {
+    if (isRecord(field) && typeof field.name === 'string') names.push(field.name);
+  }
+  return names.length > 0 ? names : null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -413,6 +459,44 @@ export function explainTypedData(
 
     const risks: RiskFinding[] = [];
 
+    /*
+     * SECURITY — the declared type is the source of truth, not `message`.
+     *
+     * A wallet hashes ONLY the fields listed in types[primaryType]. Any
+     * extra key in `message` is ignored by the wallet but would still be
+     * read by a naive explainer. That gap is exploitable: an attacker can
+     * declare a dangerous struct (say a DAI-style permit with `allowed`
+     * and `expiry`) while stuffing `message` with harmless-looking
+     * `value`/`deadline` decoys, and a message-only explainer would
+     * confidently print the decoys and raise no warning at all.
+     *
+     * So: resolve the declared field list first, and refuse the confident
+     * paths unless the fields we are about to explain are the fields the
+     * wallet will actually sign.
+     */
+    const declaredFields = declaredFieldNames(data.types, primaryType);
+    const undeclared =
+      declaredFields === null
+        ? []
+        : Object.keys(message).filter((k) => !declaredFields.includes(k));
+
+    if (undeclared.length > 0) {
+      risks.push({
+        id: 'undeclared-fields',
+        severity: 'danger',
+        title: 'This request contains hidden extra fields',
+        detail:
+          `The request shows ${undeclared.length} extra field${undeclared.length === 1 ? '' : 's'} ` +
+          `(${undeclared.slice(0, 4).join(', ')}) that your wallet will NOT sign. ` +
+          'Honest apps do not do this. It is a known trick for showing you one thing ' +
+          'and having you sign another — do not sign this.',
+      });
+    }
+
+    /** True when every field we would explain is one the wallet signs. */
+    const declares = (...names: string[]): boolean =>
+      declaredFields === null || names.every((n) => declaredFields.includes(n));
+
     // Network check applies to every kind.
     const rawDomain = isRecord(data.domain) ? data.domain : undefined;
     const chainIdPresent =
@@ -424,13 +508,15 @@ export function explainTypedData(
       if (!matches) risks.push(differentNetworkRisk());
     }
 
-    // ERC-2612 Permit
+    // ERC-2612 Permit — only when the declared type really is that permit.
     if (
       primaryType === 'Permit' &&
       'owner' in message &&
       'spender' in message &&
       'value' in message &&
-      'deadline' in message
+      'deadline' in message &&
+      declares('owner', 'spender', 'value', 'deadline') &&
+      undeclared.length === 0
     ) {
       return explainPermit(message, domain, risks, nowSec);
     }
@@ -438,7 +524,7 @@ export function explainTypedData(
     // Permit2 (single or batch)
     const isPermit2 =
       domain.name === 'Permit2' || primaryType === 'PermitSingle' || primaryType === 'PermitBatch';
-    if (isPermit2) {
+    if (isPermit2 && undeclared.length === 0 && declares('details')) {
       if (Array.isArray(message.details)) {
         return explainPermit2(message, domain, risks, nowSec, true);
       }
@@ -448,7 +534,10 @@ export function explainTypedData(
       // Claims to be Permit2 but has no recognizable details — explain generically.
     }
 
-    return explainGeneric(message, domain, risks, primaryType);
+    // Generic path: shows every field, and never claims to know the shape.
+    // Anything that failed the checks above lands here deliberately — a
+    // request we cannot vouch for must show more, not less.
+    return explainGeneric(message, domain, risks, primaryType, declaredFields);
   } catch {
     return {
       error: 'Something in this signature request could not be read, so we cannot explain it safely.',
