@@ -15,7 +15,14 @@ export function ReadinessGauge({ readiness }: Props) {
   const filled = (score / 100) * circumference;
 
   return (
-    <div className={`gauge ${band}`}>
+    <div
+      className={`gauge ${band}`}
+      role="meter"
+      aria-valuenow={score}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-label={`Flight readiness: ${score} out of 100, ${verdict}`}
+    >
       <svg viewBox="0 0 64 64" className="gauge-dial" aria-hidden="true">
         <circle className="gauge-track" cx="32" cy="32" r="26" />
         <circle

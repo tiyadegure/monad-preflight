@@ -836,4 +836,50 @@ a {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+  /* Staggered rows animate from opacity 0 — without the animation they
+     would never appear, so pin them visible. */
+  .check-row,
+  .annunciator {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Severity must never be carried by color alone (WCAG 1.4.1). Each
+   annunciator lamp gets a distinct shape as well as a distinct hue. */
+.annunciator.danger .lamp {
+  border-radius: 1px;
+}
+.annunciator.caution .lamp {
+  border-radius: 50%;
+  clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
+  border-radius: 0;
+}
+
+/* Windows high-contrast mode strips background colors; keep structure. */
+@media (forced-colors: active) {
+  .panel,
+  .annunciator,
+  .readout,
+  .gauge {
+    border: 1px solid CanvasText;
+  }
+  .gauge-arc,
+  .lamp,
+  .dot {
+    forced-color-adjust: none;
+  }
+}
+
+/* Screen-reader-only text for context a sighted user gets from color. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }

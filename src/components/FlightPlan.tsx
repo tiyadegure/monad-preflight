@@ -69,7 +69,16 @@ export function FlightPlan({
             <div className={`annunciator ${r.severity}`} key={r.id} style={delay()}>
               <span className="lamp" aria-hidden="true" />
               <div>
-                <div className="a-title">{r.title}</div>
+                <div className="a-title">
+                  <span className="sr-only">
+                    {r.severity === 'danger'
+                      ? 'Serious warning: '
+                      : r.severity === 'caution'
+                        ? 'Caution: '
+                        : 'Note: '}
+                  </span>
+                  {r.title}
+                </div>
                 <p className="a-detail">{r.detail}</p>
               </div>
             </div>

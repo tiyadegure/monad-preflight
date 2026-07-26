@@ -1,78 +1,130 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it } from 'vitest';
 import { appendFileSync, writeFileSync } from 'node:fs';
+import { simulateTx } from '../src/lib/simulate';
+import { composeExplanation } from '../src/lib/explain';
+import { computeExposure } from '../src/lib/portfolio';
+import type { Address, PreparedTx, TokenInfo } from '../src/lib/types';
+
 const OUT = 'C:/Users/gg/monad-preflight/zz-out.txt';
 writeFileSync(OUT, '');
 const log = (...a: unknown[]) => appendFileSync(OUT, a.map((x) => String(x)).join(' ') + '\n');
-const console = { log };
-import { parseIntent } from '../src/lib/intent';
-import { formatAmount, formatTokenAmount } from '../src/lib/format';
-import { comparePostFlight } from '../src/lib/postflight';
-import type { PreparedTx, SimulationResult, Address } from '../src/lib/types';
+
+const USER = '0x2222222222222222222222222222222222222222' as Address;
+const WMON = '0x760AfE86e5de5fa0Ee542fc7B7B713e1c5425701' as Address;
+const WITHDRAWAL_TOPIC =
+  '0x7fcf532c15f0a6db0bd6d0e038bea71d30d808c7d98cb3bf7268a95bf5081b65';
+const DEPOSIT_TOPIC =
+  '0xe1fffcc4923d04b559f4d29a8bfc6cda04eb5b0d3c460751c2402c5c5cc9109c';
+
+const wmonToken: TokenInfo = { address: WMON, symbol: 'WMON', decimals: 18 };
+
+function word(n: bigint) {
+  return `0x${n.toString(16).padStart(64, '0')}`;
+}
 
 describe('scratch', () => {
-  it('intent: approve with amount then token address', () => {
-    const r = parseIntent(
-      'approve 100 0x1111111111111111111111111111111111111111 for 0x2222222222222222222222222222222222222222',
-    );
-    console.log('A', JSON.stringify(r, null, 1));
-  });
-  it('intent: send token-address form', () => {
-    const r = parseIntent(
-      'send 10 0x1111111111111111111111111111111111111111 to 0x2222222222222222222222222222222222222222',
-    );
-    console.log('B', JSON.stringify(r, null, 1));
-  });
-  it('intent: send with recipient after to, one address', () => {
-    const r = parseIntent('send 0.5 MON to 0x2222222222222222222222222222222222222222');
-    console.log('C', JSON.stringify(r, null, 1));
-  });
-  it('format edges', () => {
-    console.log('fmt1', formatAmount(5_000_000_000n, 18));
-    console.log('fmt2', formatAmount(5_000_000_000n, 6));
-    console.log('fmt3', formatAmount(-1n, 18));
-    console.log('fmt4', formatAmount(1n, 0));
-    console.log('fmt5', formatAmount(123n, 255));
-    console.log('fmt6', formatAmount(1999999999999999999n, 18));
-  });
-  it('postflight unknown token decimals', () => {
-    const user = '0x2222222222222222222222222222222222222222' as Address;
-    const usdc = '0x3333333333333333333333333333333333333333';
-    const tx = {
-      from: user,
-      to: usdc as Address,
-      data: '0x',
-      value: 0n,
-      kind: 'raw',
-      summary: 'x',
-    } as PreparedTx;
-    const sim: SimulationResult = {
-      ok: true,
-      gasUsed: 21000n,
-      gasCostWei: 0n,
-      assetChanges: [],
-      approvalChanges: [],
-      events: [],
-      frames: [],
-      notes: [],
-    };
-    const amount = 5_000_000_000n; // 5000 USDC at 6 decimals
-    const receipt = {
-      status: 'success' as const,
-      gasUsed: 21000n,
-      effectiveGasPrice: 0n,
+  it('unwrap simulation asset changes', async () => {
+    const amount = 2_000_000_000_000_000_000n;
+    const trace = {
+      type: 'CALL',
+      from: USER,
+      to: WMON,
+      value: '0x0',
+      gasUsed: '0x7530',
+      input: '0x2e1a7d4d',
       logs: [
         {
-          address: usdc,
-          topics: [
-            '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef',
-            `0x000000000000000000000000${user.slice(2)}`,
-            '0x0000000000000000000000004444444444444444444444444444444444444444',
-          ],
-          data: `0x${amount.toString(16).padStart(64, '0')}`,
+          address: WMON,
+          topics: [WITHDRAWAL_TOPIC, `0x000000000000000000000000${USER.slice(2)}`],
+          data: word(amount),
         },
       ],
-    } as never;
-    const out = comparePostFlight(tx, sim, receipt, user);
-    console.log('POSTFLIGHT', JSON.stringify(out, null, 1));
+      calls: [
+        { type: 'CALL', from: WMON, to: USER, value: `0x${amount.toString(16)}`, gasUsed: '0x0' },
+      ],
+    };
+    const rpc = async (method: string) => {
+      if (method === 'debug_traceCall') return trace;
+      if (method === 'eth_estimateGas') return '0x7530';
+      if (method === 'eth_gasPrice') return '0x0';
+      throw new Error('no');
+    };
+    const tx: PreparedTx = {
+      from: USER,
+      to: WMON,
+      data: '0x2e1a7d4d',
+      value: 0n,
+      kind: 'unwrap',
+      summary: 'Unwrap 2 WMON back to MON',
+      token: wmonToken,
+      amountRaw: amount,
+      counterparty: WMON,
+    };
+    const sim = await simulateTx(tx, rpc);
+    log('UNWRAP assetChanges:', JSON.stringify(sim.assetChanges, (_k, v) => (typeof v === 'bigint' ? v.toString() : v)));
+    const exp = composeExplanation(tx, sim, [], USER);
+    log('UNWRAP outcome:', exp.outcome);
+    log('UNWRAP bullets:', JSON.stringify(exp.bullets));
+  });
+
+  it('wrap simulation asset changes', async () => {
+    const amount = 1_000_000_000_000_000_000n;
+    const trace = {
+      type: 'CALL',
+      from: USER,
+      to: WMON,
+      value: `0x${amount.toString(16)}`,
+      gasUsed: '0x7530',
+      input: '0xd0e30db0',
+      logs: [
+        {
+          address: WMON,
+          topics: [DEPOSIT_TOPIC, `0x000000000000000000000000${USER.slice(2)}`],
+          data: word(amount),
+        },
+      ],
+      calls: [],
+    };
+    const rpc = async (method: string) => {
+      if (method === 'debug_traceCall') return trace;
+      if (method === 'eth_estimateGas') return '0x7530';
+      if (method === 'eth_gasPrice') return '0x0';
+      throw new Error('no');
+    };
+    const tx: PreparedTx = {
+      from: USER,
+      to: WMON,
+      data: '0xd0e30db0',
+      value: amount,
+      kind: 'wrap',
+      summary: 'Wrap 1 MON into WMON',
+      token: wmonToken,
+      amountRaw: amount,
+      counterparty: WMON,
+    };
+    const sim = await simulateTx(tx, rpc);
+    log('WRAP assetChanges:', JSON.stringify(sim.assetChanges, (_k, v) => (typeof v === 'bigint' ? v.toString() : v)));
+    const exp = composeExplanation(tx, sim, [], USER);
+    log('WRAP outcome:', exp.outcome);
+  });
+
+  it('exposure with token missing from balances list', () => {
+    const usdc: TokenInfo = {
+      address: '0x3333333333333333333333333333333333333333' as Address,
+      symbol: 'USDC',
+      decimals: 6,
+    };
+    const report = computeExposure({
+      balances: [], // registry did not contain USDC, or balanceOf failed
+      approvals: [
+        {
+          token: usdc,
+          spender: '0x4444444444444444444444444444444444444444' as Address,
+          allowanceRaw: (1n << 256n) - 1n,
+          unlimited: true,
+        },
+      ],
+    });
+    log('EXPOSURE:', JSON.stringify(report, (_k, v) => (typeof v === 'bigint' ? v.toString() : v), 1));
   });
 });
