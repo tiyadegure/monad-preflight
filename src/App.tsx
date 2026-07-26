@@ -34,14 +34,12 @@ import { scorePlan } from './lib/score';
 import type { Readiness } from './lib/score';
 import type { DriftReport } from './lib/drift';
 import { compareSimulations } from './lib/drift';
-import { assessCounterparty } from './lib/reputation';
-import { readFees } from './lib/gasoracle';
 import type { FeeReading } from './lib/gasoracle';
-import { assessDelegationRisks, detectDelegation } from './lib/delegation';
+import { detectDelegation } from './lib/delegation';
 import { assessWalletHealth } from './lib/wallethealth';
 import type { HealthReport } from './lib/wallethealth';
-import { fingerprintAddress } from './lib/fingerprint';
 import type { Fingerprint } from './lib/fingerprint';
+import { assessTransaction, viemFactReader } from './lib/pipeline';
 import { formatTokenAmount } from './lib/format';
 import type { ApprovalRecord, ApprovalScan } from './lib/approvals';
 import { scanApprovals } from './lib/approvals';
@@ -497,97 +495,21 @@ export default function App() {
           persistTokens(addToken(registry, tx.token).tokens);
         }
 
-        // 3. Simulate against live chain state.
-        const sim = await simulateTx(tx, rpc);
-
-        // 4. Gather on-chain facts for the risk rules.
-        const probe = tx.counterparty ?? tx.to;
-        const [senderBalanceWei, cpCode, cpTxCount, cpBalance, tokenCode, selfCode] =
-          await Promise.all([
-            client.getBalance({ address: tx.from }),
-            client.getCode({ address: probe }).catch(() => null),
-            client.getTransactionCount({ address: probe }).catch(() => null),
-            client.getBalance({ address: probe }).catch(() => null),
-            tx.token?.address
-              ? client.getCode({ address: tx.token.address }).catch(() => null)
-              : Promise.resolve(null),
-            // The user's own account code: a non-empty result on a wallet
-            // means it has been delegated (EIP-7702) and is running someone
-            // else's code. That is the loudest thing we can tell them.
-            client.getCode({ address: tx.from }).catch(() => null),
-          ]);
-        const ctx: RiskContext = {
-          senderBalanceWei,
-          counterpartyIsContract:
-            cpCode === null ? undefined : Boolean(cpCode && cpCode !== '0x'),
-          counterpartyTxCount: cpTxCount ?? undefined,
-          counterpartyBalanceWei: cpBalance ?? undefined,
-          tokenIsContract: !tx.token?.address
-            ? undefined
-            : tokenCode === null
-              ? undefined
-              : Boolean(tokenCode && tokenCode !== '0x'),
-        };
-
-        // 5. Risk rules, plus on-chain counterparty reputation.
-        const risks = assessRisks(tx, sim, ctx);
-        const reputationFindings: RiskFinding[] = [];
-        if (ctx.counterpartyIsContract !== undefined) {
-          const rep = assessCounterparty(
-            {
-              isContract: ctx.counterpartyIsContract,
-              txCount: ctx.counterpartyTxCount ?? 0,
-              balanceWei: ctx.counterpartyBalanceWei ?? 0n,
-              codeSize: cpCode && cpCode !== '0x' ? (cpCode.length - 2) / 2 : 0,
-            },
-            { isApprovalTarget: tx.kind === 'erc20-approve' },
-          );
-          // Only add findings the rule engine did not already raise.
-          for (const f of rep.findings) {
-            if (!risks.some((r) => r.title === f.title)) reputationFindings.push(f);
-          }
-          risks.push(...reputationFindings);
-        }
-
-        // EIP-7702: is the user's own wallet delegated, or the recipient?
-        const delegationFindings = assessDelegationRisks({
-          self: detectDelegation(selfCode),
-          counterparty: detectDelegation(cpCode),
-          counterpartyIsRecipient:
-            tx.kind === 'native-transfer' || tx.kind === 'erc20-transfer',
-        });
-        for (const f of delegationFindings) {
-          if (!risks.some((r) => r.id === f.id)) risks.push(f);
-        }
-
-        // 6. Score and explanation.
-        const readiness = scorePlan(sim, risks);
-        const explanation = composeExplanation(tx, sim, risks, account);
+        // 3–7. Simulate, gather facts, run the rules, score, explain —
+        // one call into the shared engine pipeline (src/lib/pipeline.ts).
+        // This app is just one caller of it; a wallet or the Risk API
+        // worker composes the exact same assessment.
+        const {
+          sim,
+          risks,
+          riskContext: ctx,
+          reputationFindings,
+          readiness,
+          explanation,
+          fees,
+          counterparty,
+        } = await assessTransaction(tx, { rpc, reader: viemFactReader(client) });
         if (bookNotes.length > 0) explanation.bullets.push(...bookNotes);
-
-        // 7. Fee intelligence and counterparty identity — both optional
-        //    extras; a failure here must never block the flight plan.
-        const [fees, counterparty] = await Promise.all([
-          readFees(rpc, sim.gasUsed).catch(() => null),
-          tx.counterparty
-            ? fingerprintAddress(
-                {
-                  getCode: (a) => client.getCode({ address: a }).then((c) => c ?? '0x'),
-                  getStorageAt: (a, slot) =>
-                    client.getStorageAt({ address: a, slot }).then((v) => v ?? '0x'),
-                  call: (a, data) =>
-                    client
-                      .call({ to: a, data })
-                      .then((r) => r.data ?? '0x')
-                      .catch(() => '0x'),
-                },
-                tx.counterparty,
-              ).catch(() => null)
-            : Promise.resolve(null),
-        ]);
-        if (counterparty && counterparty.kind !== 'eoa') {
-          explanation.bullets.push(`${counterparty.label}: ${counterparty.detail}`);
-        }
 
         // 8. Optional AI narrative, grounded in simulated facts only.
         //    The plan is already complete and correct at this point, so the

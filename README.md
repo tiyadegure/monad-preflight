@@ -12,6 +12,12 @@ Works on **Monad mainnet and testnet**. Born in the Monad Playground hackathon
 (Moss Onchain Agent direction: *prepare → simulate → explain → then let the user
 decide*), built to production standards.
 
+PreFlight is three things in one repo: the **engine** (a UI-free, deterministic
+TypeScript SDK — `src/lib`, exported through `src/lib/sdk.ts`), the **app** (the
+reference integration you are reading about), and the **Risk API**
+(`workers/risk-api.ts`, the engine as a stateless HTTP service for wallets and
+dapps). Integrators start at [docs/INTEGRATION.md](docs/INTEGRATION.md).
+
 ---
 
 ## The problem
@@ -40,6 +46,7 @@ almost nothing shows *what will actually happen*.
 | ✅ **Post-flight verification** | After mining, the receipt is compared against the pre-sign simulation: outcome, every token movement, fee — matched or flagged |
 | 🌏 **中文 / English** | Bilingual dictionary (120 keys per language, parity-tested) wired through every panel, plus Chinese intent parsing. Text generated from chain data (risk findings, explanations) is English-only today — see roadmap |
 | 🤖 **Optional AI co-pilot** | Claude parses phrasings the rule grammar can't and writes a short narrative — grounded strictly in the simulator's verified facts, clearly labeled. The app is 100% functional without it |
+| 🧰 **Engine SDK + Risk API** | The whole pipeline is a UI-free library (`assessTransaction` — one call: simulate → risks → score → explain) plus a stateless, deterministic HTTP service for wallets and dapps. The app is just the reference integration — [docs/INTEGRATION.md](docs/INTEGRATION.md) |
 
 Full feature reference: **[docs/FEATURES.md](docs/FEATURES.md)**.
 
@@ -77,12 +84,13 @@ networks for you — Monad Testnet (10143) by default, Mainnet (143) via the
 switcher. Testnet gas: [faucet](https://faucet.monad.xyz).
 
 ```bash
-npm test             # 638 unit tests (offline, deterministic)
+npm test             # 670 unit tests (offline, deterministic)
 npm run test:e2e     # 13 LIVE tests against real Monad testnet AND mainnet RPCs —
                      # discovers a real token from recent blocks and verifies the
                      # whole pipeline, plus RPC failover, fee reading, contract
                      # fingerprinting, Multicall3 balances, and approval scanning
 npm run build        # strict typecheck + production build
+npm run verify:sdk   # build the engine SDK (dist-sdk/) and smoke-test the artifact
 ```
 
 ## How it works
@@ -132,8 +140,8 @@ decimal math), public `faucet()` giving 100 tUSD per call. Paste the address int
 ## Roadmap
 
 - **Swap support** via an on-chain DEX router, same prepare→simulate→explain flow
-- **Wallet-extension companion** — intercept any dapp's request and pre-flight it in place
-- **Risk API** — the simulation + risk engine as a service for wallets and dapps
+- **Wallet-extension companion** — intercept any dapp's request and pre-flight it in place (the extension would embed the same `assessTransaction` pipeline the app uses)
+- ~~Risk API~~ — **shipped** as a reference worker: [docs/risk-api.md](docs/risk-api.md). Still ahead: hosted-grade hardening (auth, quotas, caching) with a first integration partner
 - *Sending* batch transactions (EIP-5792 `wallet_sendCalls`) — the batch *explainer* is shipped; composing and submitting batches is not
 - Historical approval scanning beyond the recent-block window (indexer-backed)
 - Translate the generated prose (risk findings, explanations, simulation notes) into Chinese — the UI chrome is fully bilingual today

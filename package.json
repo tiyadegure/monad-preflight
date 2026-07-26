@@ -8,6 +8,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:sdk": "tsc -p tsconfig.lib.json",
+    "verify:sdk": "npm run build:sdk && vitest run --config vitest.sdk.config.ts",
     "lint": "oxlint",
     "test": "vitest run",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",

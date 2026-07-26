@@ -38,5 +38,11 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit -p tsconfig.app.json
 
+      - name: Typecheck workers (Risk API + AI proxy)
+        run: npx tsc -p tsconfig.worker.json
+
       - name: Build
         run: npm run build
+
+      - name: Build and smoke-test the engine SDK
+        run: npm run verify:sdk

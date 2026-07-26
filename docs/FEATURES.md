@@ -48,6 +48,8 @@ Every feature below is implemented, unit-tested, and reachable from the UI.
 | **Keyboard-first** | `Ctrl/Cmd+K` focus, `Ctrl/Cmd+Enter` prepare, `Ctrl/Cmd+Shift+S` sign, `Esc` discard, `Ctrl/Cmd+→` next tab |
 | **Installable (PWA)** | Manifest, theme color, standalone display |
 | **Optional AI co-pilot** | Claude parses phrasings the grammar can't and writes a narrative — from verified simulator facts only, clearly labeled, and entirely optional |
+| **Engine SDK** ✅ shipped | The whole pipeline as a UI-free library: `assessTransaction` composes simulate → facts → risks → reputation → 7702 checks → score → explanation in one call, with pluggable chain access (viem or raw JSON-RPC). Curated surface in `src/lib/sdk.ts`; `npm run verify:sdk` builds `dist-sdk/` and smoke-tests the emitted artifact, so "consumable" is a tested claim, not a hope |
+| **Risk API (reference)** ✅ shipped | `workers/risk-api.ts`: the engine as a stateless HTTP service — preflight, signature inspection (EIP-712/7702/5792), post-flight verification via an opaque round-tripped blob (the service stores nothing), and a one-GET delegation check. Deterministic — no AI in the service, ever. Spec: [docs/risk-api.md](risk-api.md) |
 | **Two AI key modes** | Bring-your-own-key for local use, or an origin-locked Cloudflare Worker proxy so production users never hold a key |
 | **Error boundary** | A render failure shows a calm, non-blaming panel rather than a white screen |
 

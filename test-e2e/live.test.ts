@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { encodeFunctionData, parseAbi } from 'viem';
 import { makeHttpRpc, simulateTx } from '../src/lib/simulate';
-import { RPC_URL } from '../src/lib/chain';
+import { NETWORKS } from '../src/lib/networks';
 import type { Address, Hex, PreparedTx } from '../src/lib/types';
 
 /**
@@ -11,7 +11,7 @@ import type { Address, Hex, PreparedTx } from '../src/lib/types';
  * revert detection — no mocks anywhere.
  */
 
-const rpc = makeHttpRpc(RPC_URL);
+const rpc = makeHttpRpc(NETWORKS.testnet.rpcUrls);
 
 const TRANSFER_TOPIC =
   '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';

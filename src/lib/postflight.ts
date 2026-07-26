@@ -7,7 +7,7 @@ import type {
   TokenInfo,
 } from './types';
 import { NATIVE_MON } from './types';
-import type { MinedReceipt } from './wallet';
+import type { MinedReceipt } from './types';
 import { formatTokenAmount, isSameAddress, shortAddress } from './format';
 
 /**

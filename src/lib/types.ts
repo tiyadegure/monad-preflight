@@ -208,6 +208,19 @@ export interface Explanation {
 /* ------------------------------------------------------------------ */
 
 /**
+ * The receipt facts post-flight verification needs — a shared contract,
+ * deliberately independent of where the receipt came from (the app reads
+ * it through viem; the Risk API adapts a raw JSON-RPC receipt).
+ */
+export interface MinedReceipt {
+  status: 'success' | 'reverted';
+  gasUsed: bigint;
+  effectiveGasPrice: bigint;
+  blockNumber: bigint;
+  logs: { address: Address; topics: Hex[]; data: Hex }[];
+}
+
+/**
  * A single post-flight comparison line.
  *
  * `status` is deliberately three-valued. A receipt cannot prove everything

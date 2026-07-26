@@ -1,5 +1,5 @@
 import type { PublicClient } from 'viem';
-import type { Address, Hex } from './types';
+import type { Address, Hex, MinedReceipt } from './types';
 import type { NetworkConfig } from './networks';
 
 /**
@@ -93,13 +93,7 @@ export async function sendTransaction(
   })) as Hex;
 }
 
-export interface MinedReceipt {
-  status: 'success' | 'reverted';
-  gasUsed: bigint;
-  effectiveGasPrice: bigint;
-  blockNumber: bigint;
-  logs: { address: Address; topics: Hex[]; data: Hex }[];
-}
+export type { MinedReceipt };
 
 /** Wait for the tx to land, reading through our own RPC (not the wallet's). */
 export async function waitForReceipt(
