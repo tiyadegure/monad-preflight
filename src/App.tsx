@@ -90,6 +90,14 @@ interface Plan {
   simulatedAtMs: number;
   fees: FeeReading | null;
   counterparty: Fingerprint | null;
+  /**
+   * The on-chain facts the risk rules ran against. Kept so a pre-sign
+   * re-check re-runs the SAME rules — otherwise a refreshed plan could
+   * show fewer warnings than the original, which reads as "it got safer".
+   */
+  riskContext: RiskContext;
+  /** Extra findings from counterparty reputation, re-applied on re-check. */
+  reputationFindings: RiskFinding[];
 }
 
 const LS_API_KEY = 'preflight.apiKey';
@@ -388,7 +396,7 @@ export default function App() {
 
         // 5. Risk rules, plus on-chain counterparty reputation.
         const risks = assessRisks(tx, sim, ctx);
-        const isApprovalTarget = tx.kind === 'erc20-approve';
+        const reputationFindings: RiskFinding[] = [];
         if (ctx.counterpartyIsContract !== undefined) {
           const rep = assessCounterparty(
             {
@@ -397,12 +405,13 @@ export default function App() {
               balanceWei: ctx.counterpartyBalanceWei ?? 0n,
               codeSize: cpCode && cpCode !== '0x' ? (cpCode.length - 2) / 2 : 0,
             },
-            { isApprovalTarget },
+            { isApprovalTarget: tx.kind === 'erc20-approve' },
           );
           // Only add findings the rule engine did not already raise.
           for (const f of rep.findings) {
-            if (!risks.some((r) => r.title === f.title)) risks.push(f);
+            if (!risks.some((r) => r.title === f.title)) reputationFindings.push(f);
           }
+          risks.push(...reputationFindings);
         }
 
         // 6. Score and explanation.
@@ -465,6 +474,8 @@ export default function App() {
           simulatedAtMs: Date.now(),
           fees,
           counterparty,
+          riskContext: ctx,
+          reputationFindings,
         });
         setDrift(null);
         setPhase('ready');
@@ -516,13 +527,24 @@ export default function App() {
         setDrift(report.level === 'none' ? null : report);
         if (report.level === 'material') {
           // Refresh the stored plan so "show me the new plan" is accurate.
-          const freshRisks = assessRisks(plan.tx, fresh, {
-            senderBalanceWei: await client.getBalance({ address: plan.tx.from }),
-          });
+          // Re-run the SAME rule set against a refreshed balance: reusing
+          // the original context means a re-check can never silently drop
+          // a warning the user already saw.
+          const freshCtx: RiskContext = {
+            ...plan.riskContext,
+            senderBalanceWei: await client
+              .getBalance({ address: plan.tx.from })
+              .catch(() => plan.riskContext.senderBalanceWei),
+          };
+          const freshRisks = assessRisks(plan.tx, fresh, freshCtx);
+          for (const f of plan.reputationFindings) {
+            if (!freshRisks.some((r) => r.title === f.title)) freshRisks.push(f);
+          }
           setPlan({
             ...plan,
             sim: fresh,
             risks: freshRisks,
+            riskContext: freshCtx,
             readiness: scorePlan(fresh, freshRisks),
             explanation: composeExplanation(plan.tx, fresh, freshRisks, plan.tx.from),
             simulatedAtMs: Date.now(),
