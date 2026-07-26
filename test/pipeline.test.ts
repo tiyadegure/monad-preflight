@@ -208,3 +208,36 @@ describe('rpcFactReader', () => {
     await expect(reader.getCode(ALICE)).rejects.toThrow();
   });
 });
+
+/* ------------------------------------------------------------------ */
+/* Spoofing wiring + timings                                           */
+/* ------------------------------------------------------------------ */
+
+describe('assessTransaction — spoofing defenses and timings', () => {
+  it('flags an address-poisoning lookalike fed via knownAddresses', async () => {
+    const real = '0xbbbb00000000000000000000000000000000bbbb';
+    // nativeTx sends to BOB (0xbbbb…bbbb) — craft a "known" address whose
+    // visible ends match BOB's truncated rendering.
+    const a = await assessTransaction(
+      nativeTx,
+      { rpc: fakeRpc(traceHandlers), reader: fakeReader() },
+      { ...FAST_OPTS, knownAddresses: [real] },
+    );
+    const f = a.risks.find((r) => r.id === 'address-poisoning-lookalike');
+    expect(f?.severity).toBe('danger');
+  });
+
+  it('reports measured stage timings', async () => {
+    const a = await assessTransaction(
+      nativeTx,
+      { rpc: fakeRpc(traceHandlers), reader: fakeReader() },
+      FAST_OPTS,
+    );
+    expect(a.timings.simulateMs).toBeGreaterThanOrEqual(0);
+    expect(a.timings.factsMs).toBeGreaterThanOrEqual(0);
+    expect(a.timings.extrasMs).toBeGreaterThanOrEqual(0);
+    expect(a.timings.totalMs).toBeGreaterThanOrEqual(
+      Math.max(a.timings.simulateMs, a.timings.factsMs),
+    );
+  });
+});

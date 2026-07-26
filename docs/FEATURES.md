@@ -31,6 +31,8 @@ Every feature below is implemented, unit-tested, and reachable from the UI.
 | **Counterparty reputation** | Judges an address from on-chain evidence only (code size, transaction count, how many distinct owners recently approved it) — no external allowlist that can go stale or be censored |
 | **Contract fingerprinting** | Tells a token from an NFT from a proxy from a minimal-clone forwarder, including a warning that a proxy's real code can be swapped by whoever controls it |
 | **Simulation drift detection** | Re-simulates just before signing and reports whether the chain moved while you were reading — material change, cosmetic change, or none |
+| **Anti-spoofing / address poisoning** ✅ shipped | The scam wave Monad saw at launch (fabricated Transfer events, lookalike addresses, fake claims). PreFlight flags recipients whose truncated form imitates a saved contact, tokens wearing a known symbol at the wrong address, and zero-value transfers — deterministic, local comparisons against *your* address book and token list, no external blocklist |
+| **Measured latency** ✅ shipped | Every flight plan prints the wall-clock time of its own full check (simulation · chain reads, round-trips included) so the performance story is the user's own measurement; `npm run bench` runs 10 sequential full checks against live testnet and prints percentiles |
 | **Fee intelligence** | Compares this transaction's fee against the last 20 blocks and says, in words, whether now is an expensive moment |
 
 ## Product features
@@ -39,7 +41,7 @@ Every feature below is implemented, unit-tested, and reachable from the UI.
 |---|---|
 | **Mainnet + testnet** | Chain 143 and 10143, with per-network clients, token registries, explorer links, flight logs, and a "real funds" indicator |
 | **RPC failover** | Ordered multi-endpoint client with timeouts, 429/5xx failover, and a sticky healthy endpoint |
-| **中文 / English** | Bilingual dictionary (120 keys per language, parity-tested) with auto-detection and a switcher — wired through the console, flight plan, journey strip, post-flight, hangar, flight log, settings, navigation and footer. Honest boundary: text *generated from chain data* (risk findings, explanations, simulation notes, health-check details, parse-failure messages) plus a handful of error/drift strings are English-only today; translating those is on the roadmap |
+| **中文 / English** | Bilingual dictionary (121 keys per language, parity-tested) with auto-detection and a switcher — wired through the console, flight plan, journey strip, post-flight, hangar, flight log, settings, navigation and footer. Honest boundary: text *generated from chain data* (risk findings, explanations, simulation notes, health-check details, parse-failure messages) plus a handful of error/drift strings are English-only today; translating those is on the roadmap |
 | **Address book** | Save contacts, then say "send 1 MON to alice" — names resolve to addresses before parsing |
 | **Flight log** | Every signed transaction with its verification verdict, per network, stored locally |
 | **Shareable links** | Copy a link that opens the exact same instruction for someone else (URL fragment — never sent to a server); it pre-fills, it never auto-signs |

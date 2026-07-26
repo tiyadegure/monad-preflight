@@ -92,7 +92,7 @@ Pick whichever lands best for the audience:
 ## If asked "what's actually running?"
 
 ```bash
-npm test          # 638 unit tests, offline and deterministic
+npm test          # 685 unit tests, offline and deterministic
 npm run test:e2e  # 13 live tests against real testnet AND mainnet RPCs
 ```
 

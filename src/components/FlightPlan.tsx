@@ -2,6 +2,7 @@ import type { Explanation, RiskFinding, SimulationResult } from '../lib/types';
 import type { Readiness } from '../lib/score';
 import type { FeeReading } from '../lib/gasoracle';
 import type { DriftReport } from '../lib/drift';
+import type { AssessTimings } from '../lib/pipeline';
 import type { Lang } from '../lib/i18n';
 import { t } from '../lib/i18n';
 import { ReadinessGauge } from './ReadinessGauge';
@@ -14,6 +15,7 @@ export interface PlanView {
   sim: SimulationResult;
   readiness: Readiness;
   fees: FeeReading | null;
+  timings: AssessTimings;
 }
 
 interface Props {
@@ -46,7 +48,7 @@ export function FlightPlan({
   onDiscard,
   onCopyReport,
 }: Props) {
-  const { explanation, risks, sim, readiness, fees } = plan;
+  const { explanation, risks, sim, readiness, fees, timings } = plan;
   let seq = 0;
   const delay = () => ({ animationDelay: `${seq++ * 80}ms` });
 
@@ -98,6 +100,18 @@ export function FlightPlan({
           {fees.notes.map((n) => (
             <span key={n}> {n}</span>
           ))}
+        </p>
+      )}
+
+      {timings.totalMs > 0 && (
+        <p className="fee-readout">
+          <span className="mono">
+            {t(lang, 'plan.timing', {
+              total: timings.totalMs,
+              sim: timings.simulateMs,
+              facts: timings.factsMs,
+            })}
+          </span>
         </p>
       )}
 

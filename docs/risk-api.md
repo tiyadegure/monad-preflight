@@ -44,7 +44,10 @@ Assess a transaction before it is signed.
   "from": "0xYourUser…",
   "to": "0xTarget…",
   "data": "0x…",                    // optional, defaults to 0x
-  "value": "0xde0b6b3a7640000"      // optional; "0x…" = wei, decimal = MON
+  "value": "0xde0b6b3a7640000",     // optional; "0x…" = wei, decimal = MON
+  "knownAddresses": ["0x…"]         // optional, ≤200: the user's trusted
+                                    // addresses, for address-poisoning
+                                    // lookalike detection
 }
 ```
 
@@ -55,6 +58,7 @@ Response (abridged):
   "ok": true,
   "engine": "0.2.0",
   "summary": "Custom transaction to 0xTarg…et",
+  "timings": { "simulateMs": 210, "factsMs": 95, "extrasMs": 120, "totalMs": 425 },
   "simulation": {
     "ok": true,
     "revertReason": null,

@@ -40,6 +40,7 @@ import { assessWalletHealth } from './lib/wallethealth';
 import type { HealthReport } from './lib/wallethealth';
 import type { Fingerprint } from './lib/fingerprint';
 import { assessTransaction, viemFactReader } from './lib/pipeline';
+import type { AssessTimings } from './lib/pipeline';
 import { formatTokenAmount } from './lib/format';
 import type { ApprovalRecord, ApprovalScan } from './lib/approvals';
 import { scanApprovals } from './lib/approvals';
@@ -109,6 +110,8 @@ interface Plan {
   simulatedAtMs: number;
   fees: FeeReading | null;
   counterparty: Fingerprint | null;
+  /** Measured pipeline latency — the performance story, as numbers. */
+  timings: AssessTimings;
   /**
    * The on-chain facts the risk rules ran against. Kept so a pre-sign
    * re-check re-runs the SAME rules — otherwise a refreshed plan could
@@ -508,7 +511,19 @@ export default function App() {
           explanation,
           fees,
           counterparty,
-        } = await assessTransaction(tx, { rpc, reader: viemFactReader(client) });
+          timings,
+        } = await assessTransaction(
+          tx,
+          { rpc, reader: viemFactReader(client) },
+          {
+            // Fuel for the spoofing defenses: addresses the user trusts
+            // (their own account + saved contacts) and the tokens they
+            // have taught PreFlight. A recipient or token that IMITATES
+            // one of these is the attack.
+            knownAddresses: [account, ...book.map((e) => e.address)],
+            knownTokens: tokens,
+          },
+        );
         if (bookNotes.length > 0) explanation.bullets.push(...bookNotes);
 
         // 8. Optional AI narrative, grounded in simulated facts only.
@@ -554,6 +569,7 @@ export default function App() {
           simulatedAtMs: Date.now(),
           fees,
           counterparty,
+          timings,
           riskContext: ctx,
           reputationFindings,
           builtFor: runNetwork,
@@ -580,6 +596,7 @@ export default function App() {
       registry,
       reader,
       rpc,
+      tokens,
     ],
   );
 

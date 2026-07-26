@@ -13,6 +13,7 @@
     "lint": "oxlint",
     "test": "vitest run",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
+    "bench": "vitest run --config vitest.bench.config.ts",
     "deploy:token": "node scripts/deploy-demo-token.mjs",
     "preview": "vite preview"
   },
@@ -33,6 +34,7 @@
     "solc": "^0.8.36",
     "typescript": "~6.0.2",
     "vite": "^8.1.1",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.10",
+    "wrangler": "^4.114.0"
   }
 }

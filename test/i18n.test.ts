@@ -40,6 +40,7 @@ const REQUIRED_KEYS = [
   'plan.keysNote',
   'plan.waitingWallet',
   'plan.aiLabel',
+  'plan.timing',
   'sr.danger',
   'sr.caution',
   'sr.info',

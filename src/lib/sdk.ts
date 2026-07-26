@@ -67,8 +67,12 @@ export type { RpcCallFn } from './simulate';
 export { makeHttpRpc } from './simulate';
 
 /* ---- the assessment pipeline (the front door) ---- */
-export type { AssessOptions, FactReader, FlightAssessment } from './pipeline';
+export type { AssessOptions, AssessTimings, FactReader, FlightAssessment } from './pipeline';
 export { assessTransaction, rpcFactReader, viemFactReader } from './pipeline';
+
+/* ---- spoofing / address-poisoning defenses ---- */
+export type { SpoofingInput } from './spoofing';
+export { assessSpoofing, looksAlike } from './spoofing';
 
 /* ---- the individual stages, for callers that compose their own ---- */
 export { parseIntent } from './intent';

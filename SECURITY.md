@@ -41,13 +41,40 @@ the same block), and explains a delegation request in plain language before you
 sign it — including the case where `chainId` is 0, which applies the delegation
 to every network at once.
 
+### Spoofed transfers and address poisoning — the attack Monad actually got
+
+Within 48 hours of Monad's mainnet launch (2025-11-25), scammers flooded the
+chain with fabricated ERC-20 Transfer events — fake "payments" that render as
+real in explorers and wallets while moving nothing (co-founder James Hunsaker
+warned that some appeared to come from his own wallet). The events exist to
+plant manufactured lookalike addresses in transaction histories and to lure
+users toward phishing claims and malicious approvals. ERC-20 makes this cheap:
+a Transfer event is just a log any contract may emit about any pair of
+addresses.
+
+PreFlight detects the kill chain deterministically, with no external blocklist:
+
+- **Lookalike recipients** — a recipient whose truncated rendering
+  (`0x1234…abcd`) matches a saved contact or your own account but is a
+  different address raises a danger finding naming both. This is the
+  copy-paste moment address poisoning exists for.
+- **Token impersonation** — a token wearing the symbol of one you have taught
+  PreFlight, at a different contract address, raises a danger finding.
+  Symbols are not unique; addresses are.
+- **Zero-value transfers** — a transfer of exactly nothing is the poisoning
+  primitive (its only effect is a history entry) and is flagged as such,
+  whether it appears in your intent or in the simulation's event log.
+
 **What PreFlight cannot protect against.** A compromised wallet or browser
 extension; a malicious RPC endpoint that lies about chain state (the simulation
 is only as honest as the node answering it); a contract whose behavior depends
 on state that changes after simulation (drift detection narrows this window but
 cannot close it); social engineering that convinces a user to override a
 warning; and anything after the wallet takes over — PreFlight's job ends at the
-signature prompt.
+signature prompt. Lookalike detection is also bounded by what you have told
+PreFlight: it compares against your address book and your own account, so an
+address you never saved cannot be imitated *for you* — there is no global
+similarity oracle, by design.
 
 ## Design decisions that follow from this
 

@@ -23,7 +23,9 @@ import type {
   RiskContext,
   RiskFinding,
   SimulationResult,
+  TokenInfo,
 } from './types';
+import { assessSpoofing } from './spoofing';
 import type { RpcCallFn } from './simulate';
 import { simulateTx } from './simulate';
 import { assessRisks } from './risk';
@@ -106,7 +108,28 @@ export interface AssessOptions {
   includeFees?: boolean;
   /** Identify what kind of contract the counterparty is (default true). */
   includeFingerprint?: boolean;
+  /**
+   * Addresses the user trusts (address book, own accounts). Used to catch
+   * address-poisoning lookalikes — recipients that render identically in
+   * truncated form but are different addresses.
+   */
+  knownAddresses?: readonly string[];
+  /** Tokens the user knows — used to catch symbol impersonation. */
+  knownTokens?: readonly TokenInfo[];
 }
+
+/** Wall-clock milliseconds per stage — the performance story, measured. */
+export interface AssessTimings {
+  simulateMs: number;
+  factsMs: number;
+  extrasMs: number;
+  totalMs: number;
+}
+
+const now: () => number =
+  typeof globalThis.performance?.now === 'function'
+    ? () => globalThis.performance.now()
+    : () => Date.now();
 
 /** Everything the pipeline concluded, in one bundle. */
 export interface FlightAssessment {
@@ -123,6 +146,8 @@ export interface FlightAssessment {
   fees: FeeReading | null;
   /** null when unavailable or there is no counterparty. */
   counterparty: Fingerprint | null;
+  /** Measured stage latencies — includes the caller's network round-trips. */
+  timings: AssessTimings;
 }
 
 export async function assessTransaction(
@@ -133,9 +158,11 @@ export async function assessTransaction(
   const { rpc, reader } = deps;
   const includeFees = opts.includeFees !== false;
   const includeFingerprint = opts.includeFingerprint !== false;
+  const t0 = now();
 
   // 1. Simulate against live chain state.
   const sim = await simulateTx(tx, rpc);
+  const tAfterSim = now();
 
   // 2. Gather on-chain facts. Sender balance is required; the rest turn
   //    into "unknown" on failure, which the rules treat as un-checkable —
@@ -155,6 +182,7 @@ export async function assessTransaction(
       // code. That is the loudest thing we can tell them.
       reader.getCode(tx.from).catch(() => null),
     ]);
+  const tAfterFacts = now();
 
   const ctx: RiskContext = {
     senderBalanceWei,
@@ -200,6 +228,19 @@ export async function assessTransaction(
     if (!risks.some((r) => r.id === f.id)) risks.push(f);
   }
 
+  // 4b. Spoofing defenses — the scam wave Monad actually saw at launch:
+  // address-poisoning lookalikes, token-symbol impersonation, and
+  // zero-value transfer events. All local comparisons, no blocklist.
+  const spoofFindings = assessSpoofing({
+    tx,
+    sim,
+    knownAddresses: opts.knownAddresses ?? [],
+    knownTokens: opts.knownTokens ?? [],
+  });
+  for (const f of spoofFindings) {
+    if (!risks.some((r) => r.id === f.id)) risks.push(f);
+  }
+
   // 5. Score and explanation.
   const readiness = scorePlan(sim, risks);
   const explanation = composeExplanation(tx, sim, risks, tx.from);
@@ -221,6 +262,7 @@ export async function assessTransaction(
   if (counterparty && counterparty.kind !== 'eoa') {
     explanation.bullets.push(`${counterparty.label}: ${counterparty.detail}`);
   }
+  const tEnd = now();
 
   return {
     sim,
@@ -231,5 +273,11 @@ export async function assessTransaction(
     explanation,
     fees,
     counterparty,
+    timings: {
+      simulateMs: Math.round(tAfterSim - t0),
+      factsMs: Math.round(tAfterFacts - tAfterSim),
+      extrasMs: Math.round(tEnd - tAfterFacts),
+      totalMs: Math.round(tEnd - t0),
+    },
   };
 }

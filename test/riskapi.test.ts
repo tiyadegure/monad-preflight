@@ -256,3 +256,37 @@ describe('risk api — GET /v1/delegation', () => {
     expect(body.risks).toHaveLength(0);
   });
 });
+
+describe('risk api — spoofing + timings surface', () => {
+  it('returns measured timings and honors knownAddresses', async () => {
+    const res = await api(healthyChain()).fetch(
+      post('/v1/preflight', {
+        network: 'testnet',
+        from: ALICE,
+        to: BOB,
+        value: `0x${ONE_MON.toString(16)}`,
+        // Same visible ends as BOB (0xbbbb…bbbb), different middle:
+        knownAddresses: ['0xbbbb00000000000000000000000000000000bbbb'],
+      }),
+    );
+    const body = (await res.json()) as Record<string, any>;
+    expect(body.ok).toBe(true);
+    expect(typeof body.timings.totalMs).toBe('number');
+    expect(
+      body.risks.some((r: { id: string }) => r.id === 'address-poisoning-lookalike'),
+    ).toBe(true);
+  });
+
+  it('ignores malformed knownAddresses entries instead of failing', async () => {
+    const res = await api(healthyChain()).fetch(
+      post('/v1/preflight', {
+        network: 'testnet',
+        from: ALICE,
+        to: BOB,
+        value: '0x1',
+        knownAddresses: ['not-an-address', 42, null],
+      }),
+    );
+    expect(res.status).toBe(200);
+  });
+});

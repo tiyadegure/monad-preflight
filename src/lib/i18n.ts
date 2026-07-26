@@ -65,6 +65,8 @@ const en: Dict = {
     'PreFlight never touches your keys — your wallet shows the final confirmation.',
   'plan.waitingWallet': 'Waiting for your wallet…',
   'plan.aiLabel': 'AI co-pilot · written by Claude from the simulated facts above',
+  'plan.timing':
+    'Full live check in {total} ms on Monad — simulation {sim} ms · on-chain reads {facts} ms (your network round-trips included)',
   'sr.danger': 'Serious warning:',
   'sr.caution': 'Caution:',
   'sr.info': 'Note:',
@@ -237,6 +239,8 @@ const zh: Dict = {
   'plan.keysNote': 'PreFlight 不会接触你的私钥，最终确认在你的钱包里完成。',
   'plan.waitingWallet': '等待钱包确认…',
   'plan.aiLabel': 'AI 副驾 · 由 Claude 根据上方模拟事实撰写',
+  'plan.timing':
+    '在 Monad 上完成全套实时检查仅 {total} ms——模拟 {sim} ms · 链上读取 {facts} ms（含你的网络往返）',
   'sr.danger': '严重警告：',
   'sr.caution': '注意：',
   'sr.info': '提示：',

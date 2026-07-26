@@ -156,14 +156,28 @@ async function handlePreflight(request: Request, deps: RiskApiDeps): Promise<Res
     throw err;
   }
 
+  // Optional: addresses the caller's user trusts, for address-poisoning
+  // lookalike detection. Capped so a hostile caller cannot turn this
+  // into a compute sink.
+  const knownAddresses = Array.isArray(body.knownAddresses)
+    ? (body.knownAddresses as unknown[])
+        .filter((a): a is string => typeof a === 'string' && isAddressFormat(a))
+        .slice(0, 200)
+    : [];
+
   const rpc = deps.makeRpc(network);
-  const assessment = await assessTransaction(tx, { rpc, reader: rpcFactReader(rpc) });
+  const assessment = await assessTransaction(
+    tx,
+    { rpc, reader: rpcFactReader(rpc) },
+    { knownAddresses },
+  );
 
   return json(200, {
     ok: true,
     engine: ENGINE_VERSION,
     network,
     summary: tx.summary,
+    timings: assessment.timings,
     simulation: {
       ok: assessment.sim.ok,
       revertReason: assessment.sim.revertReason ?? null,
