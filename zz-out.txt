@@ -1,0 +1,68 @@
+A {
+ "ok": true,
+ "intent": {
+  "action": "approve",
+  "token": "0x1111111111111111111111111111111111111111",
+  "amount": {
+   "value": "100"
+  },
+  "counterparty": "0x2222222222222222222222222222222222222222",
+  "notes": [
+   "Two addresses found — I treated 0x222222… as the spender and 0x111111… as the token."
+  ]
+ }
+}
+B {
+ "ok": true,
+ "intent": {
+  "action": "send",
+  "token": "0x1111111111111111111111111111111111111111",
+  "amount": {
+   "value": "10"
+  },
+  "counterparty": "0x2222222222222222222222222222222222222222",
+  "notes": [
+   "Two addresses found — I treated 0x222222… as the recipient and 0x111111… as the token."
+  ]
+ }
+}
+C {
+ "ok": true,
+ "intent": {
+  "action": "send",
+  "amount": {
+   "value": "0.5"
+  },
+  "counterparty": "0x2222222222222222222222222222222222222222",
+  "notes": []
+ }
+}
+fmt1 <0.000001
+fmt2 5,000
+fmt3 -<0.000001
+fmt4 1
+fmt5 <0.000001
+fmt6 1.999999
+POSTFLIGHT {
+ "matched": false,
+ "lines": [
+  {
+   "label": "Outcome",
+   "simulated": "will succeed",
+   "actual": "succeeded",
+   "matched": true
+  },
+  {
+   "label": "Unexpected token movement",
+   "simulated": "nothing",
+   "actual": "you sent <0.000001 token 0x3333…3333",
+   "matched": false
+  },
+  {
+   "label": "Network fee",
+   "simulated": "about 0 MON",
+   "actual": "0 MON",
+   "matched": true
+  }
+ ]
+}
