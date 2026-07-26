@@ -153,9 +153,14 @@ function walkFrames(
   frames: CallFrameSummary[],
   logs: RawLog[],
   nativeMoves: NativeMove[],
+  underError = false,
 ): void {
   const type = (frame.type ?? 'CALL').toUpperCase();
   const valueWei = hexToBigInt(frame.value);
+  // A frame inside a reverted subtree had all its effects rolled back,
+  // even if the frame itself reports no error (e.g. a contract catching
+  // a child call's revert after the child's own children "succeeded").
+  const rolledBack = underError || !!frame.error;
   const summary: CallFrameSummary = {
     depth,
     type,
@@ -169,15 +174,19 @@ function walkFrames(
   frames.push(summary);
 
   // Only CALL and CREATE frames move native MON; DELEGATECALL and
-  // STATICCALL never carry value. A frame that errored moved nothing.
+  // STATICCALL never carry value. A rolled-back frame moved nothing.
   const movesValue = type === 'CALL' || type === 'CREATE' || type === 'CREATE2';
-  if (movesValue && valueWei > 0n && !frame.error) {
+  if (movesValue && valueWei > 0n && !rolledBack) {
     nativeMoves.push({ from: summary.from, to: summary.to, value: valueWei });
   }
 
-  for (const log of frame.logs ?? []) logs.push(log);
+  // The tracer already omits logs of reverted frames; the rolledBack
+  // check is defense in depth for tracer implementations that don't.
+  if (!rolledBack) {
+    for (const log of frame.logs ?? []) logs.push(log);
+  }
   for (const child of frame.calls ?? []) {
-    walkFrames(child, depth + 1, frames, logs, nativeMoves);
+    walkFrames(child, depth + 1, frames, logs, nativeMoves, rolledBack);
   }
 }
 

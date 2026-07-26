@@ -33,20 +33,32 @@ interface RawLog {
   data: string;
 }
 
+/**
+ * This RPC limits eth_getLogs to 100-block ranges, and the testnet can be
+ * quiet for stretches — so walk backwards in 100-block chunks until we
+ * find Transfer events (up to ~6000 blocks).
+ */
 async function findRecentTransfers(): Promise<RawLog[]> {
   const latestHex = (await rpc('eth_blockNumber', [])) as string;
   const latest = BigInt(latestHex);
-  for (const span of [2n, 10n, 50n]) {
-    const logs = (await rpc('eth_getLogs', [
-      {
-        fromBlock: `0x${(latest - span).toString(16)}`,
-        toBlock: latestHex,
-        topics: [TRANSFER_TOPIC],
-      },
-    ])) as RawLog[];
-    if (logs.length > 0) return logs.slice(0, 25);
+  const found: RawLog[] = [];
+  for (let chunk = 0n; chunk < 60n && found.length < 10; chunk++) {
+    const to = latest - chunk * 100n;
+    const from = to - 99n;
+    try {
+      const logs = (await rpc('eth_getLogs', [
+        {
+          fromBlock: `0x${from.toString(16)}`,
+          toBlock: `0x${to.toString(16)}`,
+          topics: [TRANSFER_TOPIC],
+        },
+      ])) as RawLog[];
+      found.push(...logs);
+    } catch {
+      // a single over-limit or flaky chunk shouldn't abort discovery
+    }
   }
-  return [];
+  return found.slice(0, 25);
 }
 
 describe('live Monad testnet simulation', () => {
