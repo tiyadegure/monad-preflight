@@ -19,8 +19,27 @@ We care most about anything in these classes:
 **What PreFlight protects against.** Signing blind: unlimited approvals granted
 to a drainer, funds sent to a typo'd or never-used address, transactions that
 were always going to revert, permit signatures that authorize a token sweep
-with no gas and no transaction, and chain state moving between the moment you
-read a plan and the moment you sign it.
+with no gas and no transaction, wallet-takeover delegations (EIP-7702), batches
+that hide several actions behind one confirmation, and chain state moving
+between the moment you read a plan and the moment you sign it.
+
+### Wallet takeover (EIP-7702) — the current top threat
+
+Since the Pectra fork, one signature can install code into an ordinary wallet so
+that a program acts as you from then on. It is not a transfer and not an
+approval, so the fields a wallet displays reveal almost nothing; security
+reporting through 2026 put the overwhelming majority of these delegations at
+malicious contracts, with single incidents in the millions.
+
+**This is live on Monad.** Both mainnet and testnet block headers carry
+`requestsHash`, confirming the Prague fork is active, so delegated wallets are
+possible on both networks today. PreFlight therefore treats delegation as a
+first-class risk: it reads the delegation designator (`0xef0100 || address`)
+directly from account code, warns when *your own* wallet is delegated, warns
+when you are sending funds to a delegated wallet (arriving funds can be swept in
+the same block), and explains a delegation request in plain language before you
+sign it — including the case where `chainId` is 0, which applies the delegation
+to every network at once.
 
 **What PreFlight cannot protect against.** A compromised wallet or browser
 extension; a malicious RPC endpoint that lies about chain state (the simulation
