@@ -1,31 +1,17 @@
-import { defineChain } from 'viem';
-import { createPublicClient, http } from 'viem';
-
 /**
- * Monad Testnet — verified live 2026-07 (eth_chainId → 0x279f = 10143).
- * debug_traceCall with callTracer is supported; eth_simulateV1 is not.
+ * Legacy single-network surface, kept for tests and scripts.
+ * App code should use networks.ts (network-aware) instead.
  */
-export const monadTestnet = defineChain({
-  id: 10143,
-  name: 'Monad Testnet',
-  nativeCurrency: { name: 'Monad', symbol: 'MON', decimals: 18 },
-  rpcUrls: {
-    default: { http: ['https://testnet-rpc.monad.xyz'] },
-  },
-  blockExplorers: {
-    default: { name: 'MonadVision', url: 'https://testnet.monadvision.com' },
-  },
-  testnet: true,
-});
+import { NETWORKS, getPublicClient, txUrl, addressUrl } from './networks';
 
-export const RPC_URL = 'https://testnet-rpc.monad.xyz';
-export const EXPLORER_URL = 'https://testnet.monadvision.com';
-export const FAUCET_URL = 'https://faucet.monad.xyz';
+const testnet = NETWORKS.testnet;
 
-export const publicClient = createPublicClient({
-  chain: monadTestnet,
-  transport: http(RPC_URL),
-});
+export const monadTestnet = testnet.chain;
+export const RPC_URL = testnet.rpcUrls[0];
+export const EXPLORER_URL = testnet.explorerUrl;
+export const FAUCET_URL = testnet.faucetUrl ?? '';
 
-export const explorerTxUrl = (hash: string) => `${EXPLORER_URL}/tx/${hash}`;
-export const explorerAddressUrl = (addr: string) => `${EXPLORER_URL}/address/${addr}`;
+export const publicClient = getPublicClient(testnet);
+
+export const explorerTxUrl = (hash: string) => txUrl(testnet, hash);
+export const explorerAddressUrl = (addr: string) => addressUrl(testnet, addr);

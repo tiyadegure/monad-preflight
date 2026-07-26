@@ -1,5 +1,6 @@
+import type { PublicClient } from 'viem';
 import type { Address, Hex } from './types';
-import { monadTestnet, publicClient } from './chain';
+import type { NetworkConfig } from './networks';
 
 /**
  * Thin EIP-1193 wallet layer (MetaMask and compatible injected wallets).
@@ -12,8 +13,6 @@ export interface Eip1193Provider {
   on?(event: string, handler: (...args: never[]) => void): void;
   removeListener?(event: string, handler: (...args: never[]) => void): void;
 }
-
-const CHAIN_ID_HEX = `0x${monadTestnet.id.toString(16)}` as Hex; // 0x279f
 
 export function getInjectedProvider(): Eip1193Provider | null {
   const w = window as unknown as { ethereum?: Eip1193Provider };
@@ -35,12 +34,16 @@ export async function getConnectedAccount(
   return accounts?.[0] ?? null;
 }
 
-/** Switch the wallet to Monad Testnet, adding the network first if unknown. */
-export async function ensureMonadTestnet(provider: Eip1193Provider): Promise<void> {
+/** Switch the wallet to the given network, adding it first if unknown. */
+export async function ensureNetwork(
+  provider: Eip1193Provider,
+  net: NetworkConfig,
+): Promise<void> {
+  const chainIdHex = `0x${net.chainId.toString(16)}`;
   try {
     await provider.request({
       method: 'wallet_switchEthereumChain',
-      params: [{ chainId: CHAIN_ID_HEX }],
+      params: [{ chainId: chainIdHex }],
     });
   } catch (err) {
     // 4902 = chain not added to the wallet yet
@@ -50,17 +53,17 @@ export async function ensureMonadTestnet(provider: Eip1193Provider): Promise<voi
       method: 'wallet_addEthereumChain',
       params: [
         {
-          chainId: CHAIN_ID_HEX,
-          chainName: monadTestnet.name,
-          nativeCurrency: monadTestnet.nativeCurrency,
-          rpcUrls: [...monadTestnet.rpcUrls.default.http],
-          blockExplorerUrls: [monadTestnet.blockExplorers.default.url],
+          chainId: chainIdHex,
+          chainName: net.chain.name,
+          nativeCurrency: net.chain.nativeCurrency,
+          rpcUrls: [...net.rpcUrls],
+          blockExplorerUrls: [net.explorerUrl],
         },
       ],
     });
     await provider.request({
       method: 'wallet_switchEthereumChain',
-      params: [{ chainId: CHAIN_ID_HEX }],
+      params: [{ chainId: chainIdHex }],
     });
   }
 }
@@ -68,10 +71,6 @@ export async function ensureMonadTestnet(provider: Eip1193Provider): Promise<voi
 export async function getWalletChainId(provider: Eip1193Provider): Promise<number> {
   const hex = (await provider.request({ method: 'eth_chainId' })) as string;
   return Number.parseInt(hex, 16);
-}
-
-export function isOnMonadTestnet(chainId: number): boolean {
-  return chainId === monadTestnet.id;
 }
 
 /**
@@ -103,8 +102,11 @@ export interface MinedReceipt {
 }
 
 /** Wait for the tx to land, reading through our own RPC (not the wallet's). */
-export async function waitForReceipt(hash: Hex): Promise<MinedReceipt> {
-  const r = await publicClient.waitForTransactionReceipt({ hash, timeout: 120_000 });
+export async function waitForReceipt(
+  client: PublicClient,
+  hash: Hex,
+): Promise<MinedReceipt> {
+  const r = await client.waitForTransactionReceipt({ hash, timeout: 120_000 });
   return {
     status: r.status,
     gasUsed: r.gasUsed,

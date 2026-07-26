@@ -176,6 +176,29 @@ code,
   gap: 8px;
   flex-wrap: wrap;
 }
+
+.net-switch {
+  display: inline-flex;
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-pill);
+  overflow: hidden;
+}
+.net-switch button {
+  font-family: var(--font-data);
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-3);
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 5px 12px;
+  min-height: 28px;
+}
+.net-switch button.active {
+  background: var(--surface-3);
+  color: var(--text-1);
+  font-weight: 700;
+}
 .readout {
   display: inline-flex;
   align-items: center;

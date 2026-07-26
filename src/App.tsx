@@ -12,7 +12,14 @@ import type {
   TokenInfo,
   Explanation,
 } from './lib/types';
-import { FAUCET_URL, RPC_URL, publicClient } from './lib/chain';
+import type { NetworkKey } from './lib/networks';
+import {
+  DEFAULT_NETWORK,
+  NETWORKS,
+  getPublicClient,
+  isNetworkKey,
+  txUrl,
+} from './lib/networks';
 import { isAddressFormat } from './lib/format';
 import { parseIntent } from './lib/intent';
 import { BuildError, buildTx } from './lib/txbuilder';
@@ -21,10 +28,9 @@ import { makeHttpRpc, simulateTx } from './lib/simulate';
 import { assessRisks } from './lib/risk';
 import { composeExplanation } from './lib/explain';
 import { comparePostFlight } from './lib/postflight';
-import { explorerTxUrl } from './lib/chain';
 import {
   connect,
-  ensureMonadTestnet,
+  ensureNetwork,
   getConnectedAccount,
   getInjectedProvider,
   getWalletChainId,
@@ -50,11 +56,12 @@ interface Plan {
 }
 
 const LS_API_KEY = 'preflight.apiKey';
-const LS_TOKENS = 'preflight.tokens';
+const LS_NETWORK = 'preflight.network';
+const tokensKey = (net: NetworkKey) => `preflight.tokens.${net}`;
 
-function loadTokens(): TokenInfo[] {
+function loadTokens(net: NetworkKey): TokenInfo[] {
   try {
-    const raw = localStorage.getItem(LS_TOKENS);
+    const raw = localStorage.getItem(tokensKey(net));
     return raw ? (JSON.parse(raw) as TokenInfo[]) : [];
   } catch {
     return [];
@@ -69,16 +76,23 @@ function plainError(err: unknown): string {
 
 export default function App() {
   const provider = useMemo(() => getInjectedProvider(), []);
-  const rpc = useMemo(() => makeHttpRpc(RPC_URL), []);
-  const reader = useMemo(() => viemChainReader(publicClient), []);
+
+  const [networkKey, setNetworkKey] = useState<NetworkKey>(() => {
+    const stored = localStorage.getItem(LS_NETWORK);
+    return isNetworkKey(stored) ? stored : DEFAULT_NETWORK;
+  });
+  const network = NETWORKS[networkKey];
+  const client = useMemo(() => getPublicClient(network), [network]);
+  const rpc = useMemo(() => makeHttpRpc(network.rpcUrls[0]), [network]);
+  const reader = useMemo(() => viemChainReader(client), [client]);
 
   const [account, setAccount] = useState<Address | null>(null);
-  const [chainId, setChainId] = useState<number | null>(null);
+  const [walletChainId, setWalletChainId] = useState<number | null>(null);
   const [balanceWei, setBalanceWei] = useState<bigint | null>(null);
   const [connecting, setConnecting] = useState(false);
 
   const [apiKey, setApiKey] = useState(() => localStorage.getItem(LS_API_KEY) ?? '');
-  const [tokens, setTokens] = useState<TokenInfo[]>(loadTokens);
+  const [tokens, setTokens] = useState<TokenInfo[]>(() => loadTokens(networkKey));
   const [addTokenBusy, setAddTokenBusy] = useState(false);
   const [addTokenError, setAddTokenError] = useState<string | null>(null);
 
@@ -93,36 +107,57 @@ export default function App() {
 
   const registry = useMemo(() => createRegistry(tokens), [tokens]);
 
-  const refreshBalance = useCallback((addr: Address | null) => {
-    if (!addr) return setBalanceWei(null);
-    publicClient
-      .getBalance({ address: addr })
-      .then(setBalanceWei)
-      .catch(() => setBalanceWei(null));
-  }, []);
+  const refreshBalance = useCallback(
+    (addr: Address | null) => {
+      if (!addr) return setBalanceWei(null);
+      client
+        .getBalance({ address: addr })
+        .then(setBalanceWei)
+        .catch(() => setBalanceWei(null));
+    },
+    [client],
+  );
 
   /* ---- wallet lifecycle ---- */
 
   useEffect(() => {
     if (!provider) return;
-    getConnectedAccount(provider).then((a) => {
-      setAccount(a);
-      refreshBalance(a);
-    });
-    getWalletChainId(provider).then(setChainId).catch(() => {});
+    getConnectedAccount(provider).then(setAccount);
+    getWalletChainId(provider).then(setWalletChainId).catch(() => {});
     const offAccounts = onAccountsChanged(provider, (accounts) => {
-      const a = accounts[0] ?? null;
-      setAccount(a);
-      refreshBalance(a);
+      setAccount(accounts[0] ?? null);
     });
     const offChain = onChainChanged(provider, (hex) => {
-      setChainId(Number.parseInt(hex, 16));
+      setWalletChainId(Number.parseInt(hex, 16));
     });
     return () => {
       offAccounts();
       offChain();
     };
-  }, [provider, refreshBalance]);
+  }, [provider]);
+
+  // Balance follows both the account and the selected network.
+  useEffect(() => {
+    refreshBalance(account);
+  }, [account, refreshBalance]);
+
+  const resetFlight = useCallback(() => {
+    setPlan(null);
+    setPostflight(null);
+    setTxHash(null);
+    setParseSource(null);
+    setParseFailure(null);
+    setErrorMsg(null);
+    setPhase('idle');
+  }, []);
+
+  const handleSelectNetwork = (key: NetworkKey) => {
+    if (key === networkKey) return;
+    setNetworkKey(key);
+    localStorage.setItem(LS_NETWORK, key);
+    setTokens(loadTokens(key));
+    resetFlight();
+  };
 
   const handleConnect = async () => {
     if (!provider) return;
@@ -131,9 +166,8 @@ export default function App() {
     try {
       const a = await connect(provider);
       setAccount(a);
-      refreshBalance(a);
-      await ensureMonadTestnet(provider);
-      setChainId(await getWalletChainId(provider));
+      await ensureNetwork(provider, network);
+      setWalletChainId(await getWalletChainId(provider));
     } catch (err) {
       setErrorMsg(plainError(err));
     } finally {
@@ -141,11 +175,11 @@ export default function App() {
     }
   };
 
-  const handleSwitchNetwork = async () => {
+  const handleSwitchWalletNetwork = async () => {
     if (!provider) return;
     try {
-      await ensureMonadTestnet(provider);
-      setChainId(await getWalletChainId(provider));
+      await ensureNetwork(provider, network);
+      setWalletChainId(await getWalletChainId(provider));
     } catch (err) {
       setErrorMsg(plainError(err));
     }
@@ -159,10 +193,13 @@ export default function App() {
     else localStorage.removeItem(LS_API_KEY);
   };
 
-  const persistTokens = (list: TokenInfo[]) => {
-    setTokens(list);
-    localStorage.setItem(LS_TOKENS, JSON.stringify(list));
-  };
+  const persistTokens = useCallback(
+    (list: TokenInfo[]) => {
+      setTokens(list);
+      localStorage.setItem(tokensKey(networkKey), JSON.stringify(list));
+    },
+    [networkKey],
+  );
 
   const handleAddToken = async (address: string) => {
     setAddTokenError(null);
@@ -227,19 +264,19 @@ export default function App() {
         persistTokens(addToken(registry, tx.token).tokens);
       }
 
-      // 3. Simulate against live Monad testnet state.
+      // 3. Simulate against live chain state.
       const sim = await simulateTx(tx, rpc);
 
       // 4. Gather on-chain facts for the risk rules.
       const probe = tx.counterparty ?? tx.to;
       const [senderBalanceWei, cpCode, cpTxCount, cpBalance, tokenCode] =
         await Promise.all([
-          publicClient.getBalance({ address: tx.from }),
-          publicClient.getCode({ address: probe }).catch(() => null),
-          publicClient.getTransactionCount({ address: probe }).catch(() => null),
-          publicClient.getBalance({ address: probe }).catch(() => null),
+          client.getBalance({ address: tx.from }),
+          client.getCode({ address: probe }).catch(() => null),
+          client.getTransactionCount({ address: probe }).catch(() => null),
+          client.getBalance({ address: probe }).catch(() => null),
           tx.token?.address
-            ? publicClient.getCode({ address: tx.token.address }).catch(() => null)
+            ? client.getCode({ address: tx.token.address }).catch(() => null)
             : Promise.resolve(null),
         ]);
       const ctx: RiskContext = {
@@ -289,11 +326,11 @@ export default function App() {
     setPhase('signing');
     setErrorMsg(null);
     try {
-      await ensureMonadTestnet(provider);
+      await ensureNetwork(provider, network);
       const hash = await sendTransaction(provider, plan.tx);
       setTxHash(hash);
       setPhase('pending');
-      const receipt = await waitForReceipt(hash);
+      const receipt = await waitForReceipt(client, hash);
       setPostflight(comparePostFlight(plan.tx, plan.sim, receipt, plan.tx.from));
       setPhase('landed');
       refreshBalance(account);
@@ -304,7 +341,7 @@ export default function App() {
         setPhase('ready');
       } else if (txHash) {
         setErrorMsg(
-          `The transaction was sent but confirmation timed out — check the explorer: ${explorerTxUrl(txHash)}`,
+          `The transaction was sent but confirmation timed out — check the explorer: ${txUrl(network, txHash)}`,
         );
         setPhase('ready');
       } else {
@@ -321,12 +358,8 @@ export default function App() {
   };
 
   const handleNewFlight = () => {
-    setPlan(null);
-    setPostflight(null);
-    setTxHash(null);
+    resetFlight();
     setInput('');
-    setParseSource(null);
-    setPhase('idle');
     refreshBalance(account);
   };
 
@@ -345,17 +378,19 @@ export default function App() {
         <StatusStrip
           hasWallet={!!provider}
           account={account}
-          chainId={chainId}
+          walletChainId={walletChainId}
           balanceWei={balanceWei}
           connecting={connecting}
+          network={network}
           onConnect={handleConnect}
-          onSwitchNetwork={handleSwitchNetwork}
+          onSwitchWalletNetwork={handleSwitchWalletNetwork}
+          onSelectNetwork={handleSelectNetwork}
         />
       </header>
       <p className="tagline">
         Say what you want to do. PreFlight prepares the transaction, simulates it on
-        Monad testnet, and explains it in plain language — then you decide whether to
-        sign.
+        Monad {network.label.toLowerCase()}, and explains it in plain language — then
+        you decide whether to sign.
       </p>
 
       <IntentConsole
@@ -405,7 +440,7 @@ export default function App() {
           <p className="panel-label">In flight</p>
           <p className="busy">waiting for the transaction to land on Monad…</p>
           <p style={{ marginTop: 12, fontSize: 13 }}>
-            <a href={explorerTxUrl(txHash)} target="_blank" rel="noreferrer">
+            <a href={txUrl(network, txHash)} target="_blank" rel="noreferrer">
               Track on MonadVision ↗
             </a>
           </p>
@@ -413,7 +448,11 @@ export default function App() {
       )}
 
       {phase === 'landed' && postflight && txHash && (
-        <PostFlight check={postflight} txHash={txHash} onNewFlight={handleNewFlight} />
+        <PostFlight
+          check={postflight}
+          explorerHref={txUrl(network, txHash)}
+          onNewFlight={handleNewFlight}
+        />
       )}
 
       <SettingsDrawer
@@ -426,8 +465,15 @@ export default function App() {
       />
 
       <p className="footer-note">
-        Simulation runs live against Monad testnet (debug_traceCall) · keys never leave
-        your wallet · need test MON? <a href={FAUCET_URL}>faucet</a>
+        Simulation runs live against Monad {network.label.toLowerCase()}
+        (debug_traceCall) · keys never leave your wallet · simulation is a best-effort
+        preview, not a guarantee
+        {network.faucetUrl && (
+          <>
+            {' '}
+            · need test MON? <a href={network.faucetUrl}>faucet</a>
+          </>
+        )}
       </p>
     </>
   );

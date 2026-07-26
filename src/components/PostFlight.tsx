@@ -1,9 +1,8 @@
-import type { Hex, PostFlightCheck } from '../lib/types';
-import { explorerTxUrl } from '../lib/chain';
+import type { PostFlightCheck } from '../lib/types';
 
 interface Props {
   check: PostFlightCheck;
-  txHash: Hex;
+  explorerHref: string;
   onNewFlight: () => void;
 }
 
@@ -11,7 +10,7 @@ interface Props {
  * After landing: line-by-line comparison of what the simulation promised
  * vs what the mined receipt shows.
  */
-export function PostFlight({ check, txHash, onNewFlight }: Props) {
+export function PostFlight({ check, explorerHref, onNewFlight }: Props) {
   return (
     <section className="panel" aria-label="Post-flight verification">
       <p className="panel-label">Post-flight · simulation vs on-chain reality</p>
@@ -45,7 +44,7 @@ export function PostFlight({ check, txHash, onNewFlight }: Props) {
       </table>
 
       <p style={{ marginTop: 14, fontSize: 13 }}>
-        <a href={explorerTxUrl(txHash)} target="_blank" rel="noreferrer">
+        <a href={explorerHref} target="_blank" rel="noreferrer">
           View on MonadVision ↗
         </a>
       </p>
