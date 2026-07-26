@@ -2,6 +2,8 @@
 
 **See it before you sign it.**
 
+**Live: [monad-preflight.vercel.app](https://monad-preflight.vercel.app)** — testnet by default, bring a browser wallet and [faucet MON](https://faucet.monad.xyz).
+
 PreFlight is a transaction co-pilot for the Monad network. You say what you want to
 do in plain language — it prepares the transaction, simulates it against live chain
 state, explains exactly what will happen and what could go wrong, and only then do
