@@ -592,6 +592,7 @@ export default function App() {
       book,
       client,
       network,
+      networkKey,
       persistTokens,
       registry,
       reader,
