@@ -45,8 +45,9 @@ export function ApprovalHangar({
 
           {scan && !scanning && scan.records.length === 0 && (
             <p className="hint">
-              No live approvals found in the scanned range — nobody we saw can
-              currently spend your tokens.
+              {scan.complete
+                ? 'No live approvals found in the scanned range — nobody we saw can currently spend your tokens.'
+                : 'We found no approvals, but parts of this scan failed — so this is not a clean bill of health. Scan again before trusting it.'}
             </p>
           )}
 

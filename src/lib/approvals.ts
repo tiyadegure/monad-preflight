@@ -37,6 +37,12 @@ export interface ApprovalRecord {
 
 export interface ApprovalScan {
   records: ApprovalRecord[];
+  /**
+   * False when any block range or allowance read failed. An empty result
+   * from an incomplete scan means "we could not look", which is not the
+   * same as "there is nothing there" — the UI must say so.
+   */
+  complete: boolean;
   /** How many blocks the scan window covered */
   scannedBlocks: number;
   /** Oldest block scanned */
@@ -236,6 +242,10 @@ export async function scanApprovals(
   const pairs = new Map<string, PairSeen>();
   let windowFrom = latest;
   let chunkTo = latest;
+  // A skipped range is a hole in the evidence. We keep count so the scan
+  // can never present a partial read as a complete answer — "we found
+  // nothing" and "we could not look" must never sound the same.
+  let failedChunks = 0;
   for (let chunk = 0; chunk < maxChunks; chunk += 1) {
     const chunkFrom = chunkTo >= CHUNK_BLOCKS - 1n ? chunkTo - (CHUNK_BLOCKS - 1n) : 0n;
     windowFrom = chunkFrom;
@@ -249,9 +259,13 @@ export async function scanApprovals(
       ]);
       if (Array.isArray(logs)) {
         for (const log of logs) collectPair(log, pairs);
+      } else {
+        failedChunks += 1;
       }
     } catch {
-      // One flaky range must not kill the whole scan — skip this chunk.
+      // One flaky range must not kill the whole scan — but it must be
+      // reported, not silently treated as "no approvals here".
+      failedChunks += 1;
     }
     if (chunkFrom === 0n) break; // reached the start of the chain
     chunkTo = chunkFrom - 1n;
@@ -261,6 +275,12 @@ export async function scanApprovals(
   notes.push(
     `Scanned the last ${scannedBlocks.toLocaleString('en-US')} blocks — approvals granted earlier than that will not show here yet.`,
   );
+  if (failedChunks > 0) {
+    notes.push(
+      `${failedChunks} block range${failedChunks === 1 ? '' : 's'} could not be read, so this list may be incomplete. ` +
+        'Scan again before treating it as the full picture.',
+    );
+  }
 
   // ---- cap the number of live reads, keeping the most recent pairs ----
   let candidates = [...pairs.values()].sort((a, b) =>
@@ -279,6 +299,7 @@ export async function scanApprovals(
   // ---- 3 + 4: live-verify each pair, then fetch token metadata ----
   const tokenCache = new Map<string, TokenInfo>();
   const records: ApprovalRecord[] = [];
+  let unverifiedPairs = 0;
   for (const pair of candidates) {
     let allowanceRaw: bigint;
     try {
@@ -290,7 +311,9 @@ export async function scanApprovals(
       allowanceRaw = hexToBigInt(raw);
     } catch {
       // We could not confirm this one is still live — leave it out rather
-      // than show a number we did not verify.
+      // than show a number we did not verify, but count it so the user
+      // learns the list is short because a check failed.
+      unverifiedPairs += 1;
       continue;
     }
     if (allowanceRaw === 0n) continue; // revoked or fully spent — not live
@@ -311,5 +334,21 @@ export async function scanApprovals(
     return b.lastSeenBlock > a.lastSeenBlock ? 1 : b.lastSeenBlock < a.lastSeenBlock ? -1 : 0;
   });
 
-  return { records, scannedBlocks, fromBlock: windowFrom, toBlock: latest, notes };
+  if (unverifiedPairs > 0) {
+    notes.push(
+      `We found ${unverifiedPairs} more permission${unverifiedPairs === 1 ? '' : 's'} but could not read ` +
+        `${unverifiedPairs === 1 ? 'its' : 'their'} current state, so ${unverifiedPairs === 1 ? 'it is' : 'they are'} not listed above.`,
+    );
+  }
+
+  return {
+    records,
+    scannedBlocks,
+    fromBlock: windowFrom,
+    toBlock: latest,
+    notes,
+    // The UI must not say "nobody can spend your tokens" off the back of a
+    // scan that had holes in it.
+    complete: failedChunks === 0 && unverifiedPairs === 0,
+  };
 }

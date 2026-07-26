@@ -30,14 +30,14 @@ almost nothing shows *what will actually happen*.
 | 🔬 **Real simulation** | Every plan runs through `debug_traceCall` on a live RPC: full call tree, decoded events, revert reasons, gas — not a guess, a dry run against current chain state |
 | 🎯 **Readiness gauge** | One score, one verdict (Cleared / Hold / Grounded), one sentence of advice — because nobody reads fifteen warnings |
 | 💡 **Asset-change preview** | "You send 0.5 MON · 0x12…cd receives 0.5 MON · fee ≈ 0.0002 MON" — decoded from the trace's Transfer/Approval events and native value flows |
-| 🚨 **Risk annunciators** | 16 deterministic rules plus on-chain counterparty reputation: unlimited approvals, the approval-to-a-personal-wallet drainer pattern, never-used (typo?) recipients, guaranteed reverts, zero-address burns, and more — severity-ranked, jargon-free |
+| 🚨 **Risk annunciators** | 15 deterministic rules plus 4 on-chain counterparty checks: unlimited approvals, the approval-to-a-personal-wallet drainer pattern, never-used (typo?) recipients, guaranteed reverts, zero-address burns, and more — severity-ranked, jargon-free |
 | ⏱ **Drift detection** | Re-simulates immediately before you sign and tells you if the chain moved while you were reading — the honest completion of "simulate before you sign" |
-| 🏚 **Approval Hangar** | Scans on-chain Approval events, live-verifies each allowance, and shows everyone who can currently spend your tokens — one click to revoke |
+| 🏚 **Approval Hangar** | Scans a recent window of on-chain Approval events, live-verifies each allowance, and shows the spenders it found — one click to revoke. It states its block window, and says so rather than implying a clean bill of health when part of the scan fails |
 | ✒️ **Signature inspector** | Explains EIP-712 permits (ERC-2612, Permit2) before you sign. Signing costs no gas and shows nothing useful in a wallet — which is exactly why drainers prefer it |
 | 👁 **Observer mode** | Inspect any address read-only, no wallet needed — check a friend's wallet for drainer approvals, or audit before you interact |
 | ✍️ **Your keys, your wallet** | PreFlight never touches keys; your own wallet signs. It only *prepares* and *explains* |
 | ✅ **Post-flight verification** | After mining, the receipt is compared against the pre-sign simulation: outcome, every token movement, fee — matched or flagged |
-| 🌏 **中文 / English** | Full bilingual UI, auto-detected and switchable |
+| 🌏 **中文 / English** | Bilingual dictionary with auto-detection and a switcher, wired through the header and shell; the deeper panels are still English-only (see roadmap) |
 | 🤖 **Optional AI co-pilot** | Claude parses phrasings the rule grammar can't and writes a short narrative — grounded strictly in the simulator's verified facts, clearly labeled. The app is 100% functional without it |
 
 Full feature reference: **[docs/FEATURES.md](docs/FEATURES.md)**.
@@ -76,7 +76,7 @@ networks for you — Monad Testnet (10143) by default, Mainnet (143) via the
 switcher. Testnet gas: [faucet](https://faucet.monad.xyz).
 
 ```bash
-npm test             # 500 unit tests (offline, deterministic)
+npm test             # 517 unit tests (offline, deterministic)
 npm run test:e2e     # 13 LIVE tests against real Monad testnet AND mainnet RPCs —
                      # discovers a real token from recent blocks and verifies the
                      # whole pipeline, plus RPC failover, fee reading, contract
@@ -135,6 +135,8 @@ decimal math), public `faucet()` giving 100 tUSD per call. Paste the address int
 - **Risk API** — the simulation + risk engine as a service for wallets and dapps
 - Batch transactions / account abstraction (EIP-5792 `wallet_sendCalls`)
 - Historical approval scanning beyond the recent-block window (indexer-backed)
+- Finish the Chinese translation through the flight-plan, hangar and post-flight panels
+- Wire the multi-leg queue (`src/lib/queue.ts`, built and tested) into the UI
 
 ## AI usage disclosure
 

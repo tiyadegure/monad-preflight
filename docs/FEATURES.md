@@ -11,7 +11,7 @@ Every feature below is implemented, unit-tested, and reachable from the UI.
 | **Raw transaction decoding** | Paste the JSON a dapp is about to make you sign; PreFlight prepares and explains it |
 | **Live simulation** | `debug_traceCall` (callTracer + withLog): full call tree, decoded events, revert reasons, gas |
 | **Asset-change preview** | Exact deltas per party per token, decoded from trace events and native value flows |
-| **Risk engine** | 16 deterministic rules — unlimited approvals, approval-to-a-personal-wallet (the drainer pattern), never-used recipients, guaranteed reverts, zero-address burns, sending your whole balance, unreadable raw calls, degraded simulation, and more |
+| **Risk engine** | 15 deterministic rules — unlimited approvals, approval-to-a-personal-wallet (the drainer pattern), never-used recipients, guaranteed reverts, zero-address burns, sending your whole balance, unreadable raw calls, degraded simulation, and more |
 | **Readiness gauge** | One score (0–100), one verdict (Cleared / Hold / Grounded), one sentence of advice — derived deterministically from the findings |
 | **Plain-language explanation** | Second person, zero jargon, generated without AI |
 | **Post-flight verification** | The mined receipt compared against the pre-sign simulation, line by line |
@@ -21,7 +21,7 @@ Every feature below is implemented, unit-tested, and reachable from the UI.
 
 | Feature | Why it matters |
 |---|---|
-| **Approval Hangar** | Scans on-chain `Approval` events, verifies each with a live `allowance()` read, and lists everyone who can currently spend your tokens — one click revokes through the normal simulate-and-explain flow |
+| **Approval Hangar** | Scans a recent window of on-chain `Approval` events, verifies each with a live `allowance()` read, and lists the spenders it found — one click revokes through the normal simulate-and-explain flow. The scan states its block window and says so when any range failed; approvals older than the window need the indexer work on the roadmap |
 | **Exposure report** | "How much of my money can someone else take right now?" — balances × approvals, clamped to what is actually reachable |
 | **Signature inspector** | EIP-712 typed data (ERC-2612 Permit, Permit2 single and batch) explained before you sign. Signing costs no gas and shows nothing useful in a wallet, which is exactly why drainers prefer it |
 | **Observer mode** | Inspect any address read-only, without connecting a wallet — check a friend's wallet for drainer approvals, or audit a contract before you interact |
@@ -36,12 +36,12 @@ Every feature below is implemented, unit-tested, and reachable from the UI.
 |---|---|
 | **Mainnet + testnet** | Chain 143 and 10143, with per-network clients, token registries, explorer links, flight logs, and a "real funds" indicator |
 | **RPC failover** | Ordered multi-endpoint client with timeouts, 429/5xx failover, and a sticky healthy endpoint |
-| **中文 / English** | Full bilingual UI; language auto-detected, switchable, remembered |
+| **中文 / English** | Bilingual dictionary (58 keys, both languages, parity-tested) with auto-detection and a switcher. Wired through the header and shell today; the flight-plan and hangar panels are still English-only — finishing that is tracked on the roadmap |
 | **Address book** | Save contacts, then say "send 1 MON to alice" — names resolve to addresses before parsing |
 | **Flight log** | Every signed transaction with its verification verdict, per network, stored locally |
 | **Shareable links** | Copy a link that opens the exact same instruction for someone else (URL fragment — never sent to a server); it pre-fills, it never auto-signs |
 | **Markdown reports** | Copy a full flight report for records, support tickets, or team review |
-| **Multi-leg plans** | Instructions like "approve X then send Y" split into legs, each simulated and signed separately — a second signature is never hidden behind the first |
+| **Multi-leg plans** *(module built, not yet wired to the UI)* | `src/lib/queue.ts` splits "approve X then send Y" into legs and is fully tested, but no screen uses it yet. Listed here so the code is not mistaken for a shipped feature |
 | **Keyboard-first** | `Ctrl/Cmd+K` focus, `Ctrl/Cmd+Enter` prepare, `Ctrl/Cmd+Shift+S` sign, `Esc` discard, `Ctrl/Cmd+→` next tab |
 | **Installable (PWA)** | Manifest, theme color, standalone display |
 | **Optional AI co-pilot** | Claude parses phrasings the grammar can't and writes a narrative — from verified simulator facts only, clearly labeled, and entirely optional |

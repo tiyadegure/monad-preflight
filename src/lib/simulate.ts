@@ -589,6 +589,22 @@ export async function simulateTx(tx: PreparedTx, rpc: RpcCallFn): Promise<Simula
       bump(move.from, null, -move.value);
       if (move.to) bump(move.to, null, move.value);
     }
+    /*
+     * WETH9-style wrap/unwrap. Deposit/Withdrawal are the *only* record of
+     * the wrapped-token side: the contract mints and burns without emitting
+     * a Transfer. Without these, wrapping shows MON leaving and nothing
+     * arriving — a one-sided balance change that reads like a loss.
+     */
+    for (const event of events) {
+      if (!event.args) continue;
+      if (event.name === 'Deposit') {
+        // MON in, wrapped token out to the depositor.
+        bump(event.args.dst as Address, event.address, BigInt(event.args.wad ?? '0'));
+      } else if (event.name === 'Withdrawal') {
+        // Wrapped token burned; the native side is already in nativeMoves.
+        bump(event.args.src as Address, event.address, -BigInt(event.args.wad ?? '0'));
+      }
+    }
   }
 
   const tokenCache = new Map<string, TokenInfo>();

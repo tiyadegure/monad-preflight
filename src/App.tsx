@@ -536,11 +536,15 @@ export default function App() {
         }
 
         // 8. Optional AI narrative, grounded in simulated facts only.
+        //    The plan is already complete and correct at this point, so the
+        //    narrative must never be allowed to hold it hostage: a wrong
+        //    proxy URL or a slow model would otherwise leave the user
+        //    staring at "Preparing…" with a finished plan behind it.
         if (aiAvailable) {
+          const NARRATIVE_TIMEOUT_MS = 12_000;
           try {
-            const narrative = await aiNarrative(
-              createAiClient(apiKey, aiProxyUrl || undefined),
-              {
+            const narrative = await Promise.race([
+              aiNarrative(createAiClient(apiKey, aiProxyUrl || undefined), {
                 summary: tx.summary,
                 explanation,
                 simulation: {
@@ -549,8 +553,11 @@ export default function App() {
                   notes: sim.notes,
                 },
                 risks,
-              },
-            );
+              }),
+              new Promise<null>((resolve) =>
+                setTimeout(() => resolve(null), NARRATIVE_TIMEOUT_MS),
+              ),
+            ]);
             if (narrative) explanation.aiNarrative = narrative;
           } catch {
             /* optional — the deterministic explanation stands alone */
