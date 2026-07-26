@@ -4,10 +4,12 @@ import { shortAddress } from '../lib/format';
 
 interface Props {
   apiKey: string;
+  aiProxyUrl: string;
   tokens: TokenInfo[];
   addTokenBusy: boolean;
   addTokenError: string | null;
   onApiKeyChange: (key: string) => void;
+  onAiProxyUrlChange: (url: string) => void;
   onAddToken: (address: string) => void;
 }
 
@@ -17,10 +19,12 @@ interface Props {
  */
 export function SettingsDrawer({
   apiKey,
+  aiProxyUrl,
   tokens,
   addTokenBusy,
   addTokenError,
   onApiKeyChange,
+  onAiProxyUrlChange,
   onAddToken,
 }: Props) {
   const [open, setOpen] = useState(false);
@@ -36,7 +40,7 @@ export function SettingsDrawer({
       >
         {open ? '▾' : '▸'} Settings — AI co-pilot & tokens{' '}
         <span className="parse-source">
-          {apiKey ? ' · AI on' : ' · AI off (rule-based mode)'}
+          {apiKey || aiProxyUrl ? ' · AI on' : ' · AI off (rule-based mode)'}
           {tokens.length ? ` · ${tokens.length} token${tokens.length > 1 ? 's' : ''}` : ''}
         </span>
       </button>
@@ -52,6 +56,18 @@ export function SettingsDrawer({
               onChange={(e) => onApiKeyChange(e.target.value)}
               placeholder="sk-ant-…"
               autoComplete="off"
+            />
+          </label>
+
+          <label>
+            AI proxy endpoint (production alternative — the key stays on your own
+            server; see docs/ai-proxy.md)
+            <input
+              value={aiProxyUrl}
+              onChange={(e) => onAiProxyUrlChange(e.target.value.trim())}
+              placeholder="https://your-worker.workers.dev"
+              autoComplete="off"
+              spellCheck={false}
             />
           </label>
 

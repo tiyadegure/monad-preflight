@@ -11,13 +11,27 @@ import type { Explanation, ParsedIntent, RiskFinding, SimulationResult } from '.
  * The AI never invents facts: the narrative prompt receives ONLY numbers the
  * simulator produced, and the UI labels its output as AI-generated.
  *
- * Browser-direct calls are intentional for this local demo: the key is the
- * user's own, entered by them, stored only in their browser (localStorage).
+ * Two ways to connect:
+ *   - Bring-your-own-key (local use): the browser talks to Anthropic
+ *     directly with the key the user pasted. It is stored only in their
+ *     browser (localStorage) and never touches our servers.
+ *   - Proxy (production): the browser talks to our own small server
+ *     (workers/ai-proxy.ts), which holds the real key. No Anthropic key
+ *     ever appears in the page. See docs/ai-proxy.md for setup.
  */
 
 export const DEFAULT_AI_MODEL = 'claude-opus-5';
 
-export function createAiClient(apiKey: string): Anthropic {
+export function createAiClient(apiKey: string, proxyUrl?: string): Anthropic {
+  if (proxyUrl) {
+    return new Anthropic({
+      baseURL: proxyUrl,
+      // The SDK insists on some key string. The proxy holds the real key
+      // server-side and never reads or forwards this placeholder.
+      apiKey: apiKey || 'proxy-managed',
+      dangerouslyAllowBrowser: true,
+    });
+  }
   return new Anthropic({
     apiKey,
     // Required for browser use; acceptable here because the key is the

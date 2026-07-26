@@ -168,6 +168,19 @@ export function assessRisks(
 
   /* ---------------- info ---------------- */
 
+  // Wrapping and unwrapping are the same coins in a different coat, so
+  // the transfer warnings above (send-to-contract, fresh-recipient) are
+  // deliberately gated to transfer kinds and stay quiet here.
+  if (tx.kind === 'wrap' || tx.kind === 'unwrap') {
+    add(
+      'wrap-info',
+      'info',
+      'Fully reversible',
+      'This converts between MON and WMON at exactly 1 to 1 — 1 MON always equals 1 WMON.' +
+        ' You can undo it at any time; nothing is lost except the small network fee.',
+    );
+  }
+
   if (isSameAddress(tx.counterparty, tx.from)) {
     add(
       'self-transfer',

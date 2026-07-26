@@ -349,6 +349,130 @@ describe('buildTx: revoke', () => {
 });
 
 /* ------------------------------------------------------------------ */
+/* wrap / unwrap                                                       */
+/* ------------------------------------------------------------------ */
+
+const WMON_ADDRESS = getAddress('0x4444444444444444444444444444444444444444');
+const ONE_MON = 1_000_000_000_000_000_000n;
+
+const WMON_ABI = parseAbi([
+  'function deposit() payable',
+  'function withdraw(uint256 amount)',
+]);
+
+function makeWrapDeps(overrides: Partial<ChainReader> = {}) {
+  return { ...makeDeps(overrides), wmon: WMON_ADDRESS };
+}
+
+describe('buildTx: wrap MON into WMON', () => {
+  it('builds deposit() with the amount as value and exact calldata', async () => {
+    const tx = await buildTx(
+      intent({ action: 'wrap', amount: { value: '0.5' } }),
+      FROM,
+      makeWrapDeps(),
+    );
+    expect(tx.kind).toBe('wrap');
+    expect(tx.to).toBe(WMON_ADDRESS);
+    expect(tx.data).toBe('0xd0e30db0'); // deposit() selector, nothing more
+    expect(tx.value).toBe(ONE_MON / 2n);
+    expect(tx.amountRaw).toBe(ONE_MON / 2n);
+    expect(tx.token).toEqual({ address: WMON_ADDRESS, symbol: 'WMON', decimals: 18 });
+    expect(tx.counterparty).toBe(WMON_ADDRESS);
+    expect(tx.summary).toBe('Wrap 0.5 MON into WMON');
+  });
+
+  it('fails plainly when the network has no WMON contract', async () => {
+    const build = buildTx(
+      intent({ action: 'wrap', amount: { value: '1' } }),
+      FROM,
+      makeDeps(), // no wmon field — like the testnet
+    );
+    await expect(build).rejects.toThrow(BuildError);
+    await expect(build).rejects.toThrow('Wrapping is not available on this network yet.');
+  });
+
+  it('rejects wrapping "all" so gas money is never wiped out', async () => {
+    const build = buildTx(
+      intent({ action: 'wrap', amount: { all: true } }),
+      FROM,
+      makeWrapDeps(),
+    );
+    await expect(build).rejects.toThrow(BuildError);
+    await expect(build).rejects.toThrow(/fee/i);
+  });
+
+  it('requires an amount', async () => {
+    await expect(
+      buildTx(intent({ action: 'wrap' }), FROM, makeWrapDeps()),
+    ).rejects.toThrow(/how much/i);
+  });
+});
+
+describe('buildTx: unwrap WMON back to MON', () => {
+  it('builds withdraw(amount) calldata with zero value', async () => {
+    const tx = await buildTx(
+      intent({ action: 'unwrap', amount: { value: '2' } }),
+      FROM,
+      makeWrapDeps(),
+    );
+    expect(tx.kind).toBe('unwrap');
+    expect(tx.to).toBe(WMON_ADDRESS);
+    expect(tx.value).toBe(0n);
+    expect(tx.amountRaw).toBe(2n * ONE_MON);
+    expect(tx.data).toBe(
+      encodeFunctionData({
+        abi: WMON_ABI,
+        functionName: 'withdraw',
+        args: [2n * ONE_MON],
+      }),
+    );
+    expect(tx.token).toEqual({ address: WMON_ADDRESS, symbol: 'WMON', decimals: 18 });
+    expect(tx.counterparty).toBe(WMON_ADDRESS);
+    expect(tx.summary).toBe('Unwrap 2 WMON back to MON');
+  });
+
+  it('unwrap all reads the sender\'s WMON balance and uses it exactly', async () => {
+    const calls: [Address, Address][] = [];
+    const tx = await buildTx(
+      intent({ action: 'unwrap', amount: { all: true } }),
+      FROM,
+      makeWrapDeps({
+        erc20BalanceOf: async (token: Address, owner: Address) => {
+          calls.push([token, owner]);
+          return 3n * ONE_MON;
+        },
+      }),
+    );
+    expect(calls).toEqual([[WMON_ADDRESS, FROM]]);
+    expect(tx.amountRaw).toBe(3n * ONE_MON);
+    expect(tx.data).toBe(
+      encodeFunctionData({
+        abi: WMON_ABI,
+        functionName: 'withdraw',
+        args: [3n * ONE_MON],
+      }),
+    );
+    expect(tx.summary).toBe('Unwrap 3 WMON back to MON');
+  });
+
+  it('unwrap all fails plainly when the WMON balance is zero', async () => {
+    await expect(
+      buildTx(
+        intent({ action: 'unwrap', amount: { all: true } }),
+        FROM,
+        makeWrapDeps({ erc20BalanceOf: async () => 0n }),
+      ),
+    ).rejects.toThrow('You do not have any WMON to unwrap.');
+  });
+
+  it('fails plainly when the network has no WMON contract', async () => {
+    await expect(
+      buildTx(intent({ action: 'unwrap', amount: { value: '1' } }), FROM, makeDeps()),
+    ).rejects.toThrow('Wrapping is not available on this network yet.');
+  });
+});
+
+/* ------------------------------------------------------------------ */
 /* raw                                                                 */
 /* ------------------------------------------------------------------ */
 

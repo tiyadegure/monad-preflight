@@ -34,7 +34,7 @@ export const NATIVE_MON: TokenInfo = {
 /* Intent — output of the parser. Pure text analysis, no chain access. */
 /* ------------------------------------------------------------------ */
 
-export type IntentAction = 'send' | 'approve' | 'revoke' | 'raw';
+export type IntentAction = 'send' | 'approve' | 'revoke' | 'wrap' | 'unwrap' | 'raw';
 
 export interface ParsedAmount {
   /** Decimal string exactly as the user wrote it, e.g. "0.5" */
@@ -82,6 +82,8 @@ export type PreparedTxKind =
   | 'erc20-transfer'
   | 'erc20-approve'
   | 'erc20-revoke'
+  | 'wrap'
+  | 'unwrap'
   | 'raw';
 
 export interface PreparedTx {

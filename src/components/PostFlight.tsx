@@ -3,14 +3,22 @@ import type { PostFlightCheck } from '../lib/types';
 interface Props {
   check: PostFlightCheck;
   explorerHref: string;
+  copied: boolean;
   onNewFlight: () => void;
+  onCopyReport: () => void;
 }
 
 /**
  * After landing: line-by-line comparison of what the simulation promised
- * vs what the mined receipt shows.
+ * against what the mined receipt actually shows.
  */
-export function PostFlight({ check, explorerHref, onNewFlight }: Props) {
+export function PostFlight({
+  check,
+  explorerHref,
+  copied,
+  onNewFlight,
+  onCopyReport,
+}: Props) {
   return (
     <section className="panel" aria-label="Post-flight verification">
       <p className="panel-label">Post-flight · simulation vs on-chain reality</p>
@@ -52,6 +60,9 @@ export function PostFlight({ check, explorerHref, onNewFlight }: Props) {
       <div className="sign-bar">
         <button className="btn-ghost" onClick={onNewFlight}>
           New flight
+        </button>
+        <button className="btn-ghost" onClick={onCopyReport}>
+          {copied ? 'Copied ✓' : 'Copy report'}
         </button>
       </div>
     </section>

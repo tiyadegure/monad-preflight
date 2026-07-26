@@ -26,11 +26,19 @@ export class BuildError extends Error {
 interface BuildDeps {
   registry: TokenRegistry;
   reader: ChainReader;
+  /** Canonical wrapped-MON (WMON) contract on the active network, if it has one. */
+  wmon?: Address;
 }
 
 const ERC20_WRITE_ABI = parseAbi([
   'function transfer(address to, uint256 amount) returns (bool)',
   'function approve(address spender, uint256 amount) returns (bool)',
+]);
+
+/** Standard WETH9-style interface: deposit() wraps, withdraw() unwraps. */
+const WMON_ABI = parseAbi([
+  'function deposit() payable',
+  'function withdraw(uint256 amount)',
 ]);
 
 /* ------------------------------------------------------------------ */
@@ -124,6 +132,10 @@ export async function buildTx(
       return buildApprove(intent, sender, deps);
     case 'revoke':
       return buildRevoke(intent, sender, deps);
+    case 'wrap':
+      return buildWrap(intent, sender, deps);
+    case 'unwrap':
+      return buildUnwrap(intent, sender, deps);
     case 'raw':
       return buildRaw(intent, sender);
   }
@@ -324,6 +336,97 @@ async function buildRevoke(
     token,
     amountRaw: 0n,
     counterparty: spender,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* wrap / unwrap — converting between native MON and WMON              */
+/* ------------------------------------------------------------------ */
+
+/** The WMON contract address, or a plain-language failure where none exists. */
+function requireWmon(deps: BuildDeps): Address {
+  if (deps.wmon === undefined) {
+    throw new BuildError('Wrapping is not available on this network yet.');
+  }
+  return deps.wmon;
+}
+
+function wmonToken(address: Address): TokenInfo {
+  return { address, symbol: 'WMON', decimals: 18 };
+}
+
+async function buildWrap(
+  intent: ParsedIntent,
+  from: Address,
+  deps: BuildDeps,
+): Promise<PreparedTx> {
+  const wmon = requireWmon(deps);
+  const amount = intent.amount;
+
+  if (amount?.all) {
+    throw new BuildError(
+      'Wrapping your entire balance would leave no MON to pay the network fee ' +
+        'with, so the transaction would fail. Pick a number instead, like "wrap 1 MON".',
+    );
+  }
+  if (amount?.value === undefined) {
+    throw new BuildError(
+      'How much MON do you want to wrap? Add an amount, like "wrap 1 MON".',
+    );
+  }
+  const amountRaw = parseUserAmount(amount.value, NATIVE_MON);
+
+  return {
+    from,
+    to: wmon,
+    // deposit() takes no arguments — the calldata is just its selector.
+    data: encodeFunctionData({ abi: WMON_ABI, functionName: 'deposit' }),
+    value: amountRaw,
+    kind: 'wrap',
+    summary: `Wrap ${formatTokenAmount(amountRaw, NATIVE_MON)} into WMON`,
+    token: wmonToken(wmon),
+    amountRaw,
+    counterparty: wmon,
+  };
+}
+
+async function buildUnwrap(
+  intent: ParsedIntent,
+  from: Address,
+  deps: BuildDeps,
+): Promise<PreparedTx> {
+  const wmon = requireWmon(deps);
+  const token = wmonToken(wmon);
+  const amount = intent.amount;
+
+  let amountRaw: bigint;
+  if (amount?.all) {
+    amountRaw = await deps.reader.erc20BalanceOf(wmon, from);
+    if (amountRaw === 0n) {
+      throw new BuildError('You do not have any WMON to unwrap.');
+    }
+  } else if (amount?.value !== undefined) {
+    amountRaw = parseUserAmount(amount.value, token);
+  } else {
+    throw new BuildError(
+      'How much WMON do you want to unwrap? Add an amount, like "unwrap 2 WMON", or say "all".',
+    );
+  }
+
+  return {
+    from,
+    to: wmon,
+    data: encodeFunctionData({
+      abi: WMON_ABI,
+      functionName: 'withdraw',
+      args: [amountRaw],
+    }),
+    value: 0n,
+    kind: 'unwrap',
+    summary: `Unwrap ${formatTokenAmount(amountRaw, token)} back to MON`,
+    token,
+    amountRaw,
+    counterparty: wmon,
   };
 }
 

@@ -120,6 +120,92 @@ function addressAfter(masked: string, keyword: RegExp): number | null {
 }
 
 /* ------------------------------------------------------------------ */
+/* Wrap / unwrap — converting between native MON and WMON              */
+/* ------------------------------------------------------------------ */
+
+const WRAP_SUGGESTIONS = ['wrap 1 MON', 'wrap 0.5 MON into WMON'];
+const UNWRAP_SUGGESTIONS = ['unwrap 2 WMON', 'unwrap all my WMON'];
+
+/**
+ * Detect "wrap 1 MON" / "unwrap 2 WMON" / "convert X mon to wmon".
+ * Returns null when the sentence is not about wrapping at all, so the
+ * caller can carry on with send / approve / revoke detection.
+ *
+ * Word boundaries do the heavy lifting: \bwrap\b does not match inside
+ * "unwrap", and \bmon\b does not match inside "wmon".
+ */
+function parseWrapUnwrap(
+  lower: string,
+  masked: string,
+  addressCount: number,
+): ParseResult | null {
+  let action: 'wrap' | 'unwrap' | null = null;
+  if (/\bunwrap\b/.test(lower)) {
+    action = 'unwrap';
+  } else if (/\bwrap\b/.test(lower)) {
+    action = 'wrap';
+  } else if (/\bconvert\b/.test(lower)) {
+    // "convert 1 mon to wmon" wraps; "convert 2 wmon to mon" unwraps.
+    // Whichever coin is named first is the one being converted away.
+    const monIndex = lower.search(/\bmon(?:ad)?\b/);
+    const wmonIndex = lower.search(/\bwmon\b/);
+    if (monIndex !== -1 && wmonIndex !== -1) {
+      action = monIndex < wmonIndex ? 'wrap' : 'unwrap';
+    }
+  }
+  if (action === null) return null;
+
+  const notes: string[] = [];
+  if (addressCount > 0) {
+    notes.push(
+      'Wrapping happens entirely inside your own wallet, so I ignored the address in your message.',
+    );
+  }
+
+  const wantsAll = /\b(all|everything|entire balance|whole balance)\b/.test(lower);
+  const numberMatch = /(\d[\d,]*(?:\.\d+)?)/.exec(masked);
+  const amountValue = numberMatch ? numberMatch[1].replace(/,/g, '') : undefined;
+
+  if (action === 'wrap') {
+    if (amountValue === undefined && wantsAll) {
+      return failure(
+        'Wrapping your entire balance would leave no MON to pay the network fee with, ' +
+          'so the transaction would fail. Pick a number instead, like "wrap 1 MON".',
+        WRAP_SUGGESTIONS,
+      );
+    }
+    if (amountValue === undefined) {
+      return failure(
+        'How much MON do you want to wrap? Add an amount, like "wrap 1 MON".',
+        WRAP_SUGGESTIONS,
+      );
+    }
+    return {
+      ok: true,
+      intent: { action: 'wrap', amount: { value: amountValue }, notes },
+    };
+  }
+
+  // unwrap
+  if (wantsAll && amountValue === undefined) {
+    return {
+      ok: true,
+      intent: { action: 'unwrap', amount: { all: true }, notes },
+    };
+  }
+  if (amountValue === undefined) {
+    return failure(
+      'How much WMON do you want to unwrap? Add an amount, like "unwrap 2 WMON" — or say "all".',
+      UNWRAP_SUGGESTIONS,
+    );
+  }
+  return {
+    ok: true,
+    intent: { action: 'unwrap', amount: { value: amountValue }, notes },
+  };
+}
+
+/* ------------------------------------------------------------------ */
 /* Main entry point                                                    */
 /* ------------------------------------------------------------------ */
 
@@ -134,6 +220,10 @@ export function parseIntent(text: string): ParseResult {
   const lower = masked.toLowerCase();
   const notes: string[] = [];
 
+  /* ---- wrap / unwrap (checked first: these need no counterparty) ---- */
+  const wrapResult = parseWrapUnwrap(lower, masked, addresses.length);
+  if (wrapResult) return wrapResult;
+
   /* ---- action ---- */
   const isRevoke = /\b(revoke|cancel)\b/.test(lower);
   const isApprove =
@@ -144,7 +234,7 @@ export function parseIntent(text: string): ParseResult {
 
   if (!isRevoke && !isApprove && !isSend) {
     return failure(
-      'I did not catch what you want to do. I can send MON or tokens, approve spending, or revoke an approval.',
+      'I did not catch what you want to do. I can send MON or tokens, approve spending, revoke an approval, or wrap MON into WMON and back.',
     );
   }
 

@@ -1,0 +1,18 @@
+{
+  "name": "Monad PreFlight",
+  "short_name": "PreFlight",
+  "description": "Say what you want to do on Monad; PreFlight prepares, simulates, and explains the transaction in plain language before you sign.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#17161d",
+  "theme_color": "#17161d",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any",
+      "purpose": "any maskable"
+    }
+  ]
+}

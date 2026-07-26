@@ -16,18 +16,27 @@ import type { NetworkKey } from './lib/networks';
 import {
   DEFAULT_NETWORK,
   NETWORKS,
+  addressUrl,
   getPublicClient,
   isNetworkKey,
+  makeNetworkRpc,
   txUrl,
 } from './lib/networks';
 import { isAddressFormat } from './lib/format';
 import { parseIntent } from './lib/intent';
 import { BuildError, buildTx } from './lib/txbuilder';
 import { addToken, createRegistry, findToken, viemChainReader } from './lib/tokens';
-import { makeHttpRpc, simulateTx } from './lib/simulate';
+import { simulateTx } from './lib/simulate';
 import { assessRisks } from './lib/risk';
 import { composeExplanation } from './lib/explain';
 import { comparePostFlight } from './lib/postflight';
+import { scorePlan } from './lib/score';
+import type { Readiness } from './lib/score';
+import type { ApprovalRecord, ApprovalScan } from './lib/approvals';
+import { scanApprovals } from './lib/approvals';
+import type { FlightRecord } from './lib/history';
+import { clearFlights, loadFlights, recordFlight } from './lib/history';
+import { flightReportMarkdown } from './lib/report';
 import {
   connect,
   ensureNetwork,
@@ -45,17 +54,23 @@ import { IntentConsole } from './components/IntentConsole';
 import { FlightPlan } from './components/FlightPlan';
 import { PostFlight } from './components/PostFlight';
 import { SettingsDrawer } from './components/SettingsDrawer';
+import { ApprovalHangar } from './components/ApprovalHangar';
+import { FlightLog } from './components/FlightLog';
+import { SignatureExplainer } from './components/SignatureExplainer';
 
 type Phase = 'idle' | 'planning' | 'ready' | 'signing' | 'pending' | 'landed';
+type View = 'fly' | 'hangar' | 'log' | 'sign';
 
 interface Plan {
   tx: PreparedTx;
   sim: SimulationResult;
   risks: RiskFinding[];
   explanation: Explanation;
+  readiness: Readiness;
 }
 
 const LS_API_KEY = 'preflight.apiKey';
+const LS_AI_PROXY = 'preflight.aiProxyUrl';
 const LS_NETWORK = 'preflight.network';
 const tokensKey = (net: NetworkKey) => `preflight.tokens.${net}`;
 
@@ -83,15 +98,20 @@ export default function App() {
   });
   const network = NETWORKS[networkKey];
   const client = useMemo(() => getPublicClient(network), [network]);
-  const rpc = useMemo(() => makeHttpRpc(network.rpcUrls[0]), [network]);
+  const rpc = useMemo(() => makeNetworkRpc(network), [network]);
   const reader = useMemo(() => viemChainReader(client), [client]);
 
+  const [view, setView] = useState<View>('fly');
   const [account, setAccount] = useState<Address | null>(null);
   const [walletChainId, setWalletChainId] = useState<number | null>(null);
   const [balanceWei, setBalanceWei] = useState<bigint | null>(null);
   const [connecting, setConnecting] = useState(false);
 
   const [apiKey, setApiKey] = useState(() => localStorage.getItem(LS_API_KEY) ?? '');
+  const [aiProxyUrl, setAiProxyUrl] = useState(
+    () => localStorage.getItem(LS_AI_PROXY) ?? '',
+  );
+  const aiAvailable = Boolean(apiKey || aiProxyUrl);
   const [tokens, setTokens] = useState<TokenInfo[]>(() => loadTokens(networkKey));
   const [addTokenBusy, setAddTokenBusy] = useState(false);
   const [addTokenError, setAddTokenError] = useState<string | null>(null);
@@ -104,6 +124,11 @@ export default function App() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<Hex | null>(null);
   const [postflight, setPostflight] = useState<PostFlightCheck | null>(null);
+
+  const [scan, setScan] = useState<ApprovalScan | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const [flights, setFlights] = useState<FlightRecord[]>(() => loadFlights(networkKey));
+  const [copied, setCopied] = useState(false);
 
   const registry = useMemo(() => createRegistry(tokens), [tokens]);
 
@@ -136,7 +161,6 @@ export default function App() {
     };
   }, [provider]);
 
-  // Balance follows both the account and the selected network.
   useEffect(() => {
     refreshBalance(account);
   }, [account, refreshBalance]);
@@ -148,6 +172,7 @@ export default function App() {
     setParseSource(null);
     setParseFailure(null);
     setErrorMsg(null);
+    setCopied(false);
     setPhase('idle');
   }, []);
 
@@ -156,6 +181,8 @@ export default function App() {
     setNetworkKey(key);
     localStorage.setItem(LS_NETWORK, key);
     setTokens(loadTokens(key));
+    setFlights(loadFlights(key));
+    setScan(null);
     resetFlight();
   };
 
@@ -193,6 +220,12 @@ export default function App() {
     else localStorage.removeItem(LS_API_KEY);
   };
 
+  const handleAiProxyUrlChange = (url: string) => {
+    setAiProxyUrl(url);
+    if (url) localStorage.setItem(LS_AI_PROXY, url);
+    else localStorage.removeItem(LS_AI_PROXY);
+  };
+
   const persistTokens = useCallback(
     (list: TokenInfo[]) => {
       setTokens(list);
@@ -220,104 +253,125 @@ export default function App() {
 
   /* ---- the core flow: parse → build → simulate → assess → explain ---- */
 
-  const handlePrepare = async () => {
-    if (!account) return;
-    setPhase('planning');
-    setPlan(null);
-    setParseFailure(null);
-    setErrorMsg(null);
-    setPostflight(null);
-    setTxHash(null);
-    setParseSource(null);
+  const prepareFromText = useCallback(
+    async (text: string) => {
+      if (!account) return;
+      setView('fly');
+      setPhase('planning');
+      setPlan(null);
+      setParseFailure(null);
+      setErrorMsg(null);
+      setPostflight(null);
+      setTxHash(null);
+      setParseSource(null);
+      setCopied(false);
 
-    try {
-      // 1. Parse: rules first; Claude as fallback when a key is configured.
-      let intent: ParsedIntent | null = null;
-      let source: 'rules' | 'ai' = 'rules';
-      const ruleResult = parseIntent(input.trim());
-      if (ruleResult.ok) {
-        intent = ruleResult.intent;
-      } else if (apiKey) {
-        try {
-          intent = await aiParseIntent(createAiClient(apiKey), input.trim());
-          source = 'ai';
-        } catch {
-          intent = null;
+      try {
+        // 1. Parse: rules first; Claude as fallback when AI is configured.
+        let intent: ParsedIntent | null = null;
+        let source: 'rules' | 'ai' = 'rules';
+        const ruleResult = parseIntent(text.trim());
+        if (ruleResult.ok) {
+          intent = ruleResult.intent;
+        } else if (aiAvailable) {
+          try {
+            intent = await aiParseIntent(
+              createAiClient(apiKey, aiProxyUrl || undefined),
+              text.trim(),
+            );
+            source = 'ai';
+          } catch {
+            intent = null;
+          }
         }
-      }
-      if (!intent) {
-        setParseFailure(
-          ruleResult.ok
-            ? { ok: false, reason: 'Could not understand that.', suggestions: [] }
-            : ruleResult,
-        );
-        setPhase('idle');
-        return;
-      }
-      setParseSource(source);
+        if (!intent) {
+          setParseFailure(
+            ruleResult.ok
+              ? { ok: false, reason: 'Could not understand that.', suggestions: [] }
+              : ruleResult,
+          );
+          setPhase('idle');
+          return;
+        }
+        setParseSource(source);
 
-      // 2. Build the unsigned transaction.
-      const tx = await buildTx(intent, account, { registry, reader });
+        // 2. Build the unsigned transaction.
+        const tx = await buildTx(intent, account, {
+          registry,
+          reader,
+          wmon: network.wmon,
+        });
 
-      // Remember tokens the builder had to look up on-chain.
-      if (tx.token?.address && !findToken(registry, tx.token.address)) {
-        persistTokens(addToken(registry, tx.token).tokens);
-      }
+        if (tx.token?.address && !findToken(registry, tx.token.address)) {
+          persistTokens(addToken(registry, tx.token).tokens);
+        }
 
-      // 3. Simulate against live chain state.
-      const sim = await simulateTx(tx, rpc);
+        // 3. Simulate against live chain state.
+        const sim = await simulateTx(tx, rpc);
 
-      // 4. Gather on-chain facts for the risk rules.
-      const probe = tx.counterparty ?? tx.to;
-      const [senderBalanceWei, cpCode, cpTxCount, cpBalance, tokenCode] =
-        await Promise.all([
-          client.getBalance({ address: tx.from }),
-          client.getCode({ address: probe }).catch(() => null),
-          client.getTransactionCount({ address: probe }).catch(() => null),
-          client.getBalance({ address: probe }).catch(() => null),
-          tx.token?.address
-            ? client.getCode({ address: tx.token.address }).catch(() => null)
-            : Promise.resolve(null),
-        ]);
-      const ctx: RiskContext = {
-        senderBalanceWei,
-        counterpartyIsContract:
-          cpCode === null ? undefined : Boolean(cpCode && cpCode !== '0x'),
-        counterpartyTxCount: cpTxCount ?? undefined,
-        counterpartyBalanceWei: cpBalance ?? undefined,
-        tokenIsContract: !tx.token?.address
-          ? undefined
-          : tokenCode === null
+        // 4. Gather on-chain facts for the risk rules.
+        const probe = tx.counterparty ?? tx.to;
+        const [senderBalanceWei, cpCode, cpTxCount, cpBalance, tokenCode] =
+          await Promise.all([
+            client.getBalance({ address: tx.from }),
+            client.getCode({ address: probe }).catch(() => null),
+            client.getTransactionCount({ address: probe }).catch(() => null),
+            client.getBalance({ address: probe }).catch(() => null),
+            tx.token?.address
+              ? client.getCode({ address: tx.token.address }).catch(() => null)
+              : Promise.resolve(null),
+          ]);
+        const ctx: RiskContext = {
+          senderBalanceWei,
+          counterpartyIsContract:
+            cpCode === null ? undefined : Boolean(cpCode && cpCode !== '0x'),
+          counterpartyTxCount: cpTxCount ?? undefined,
+          counterpartyBalanceWei: cpBalance ?? undefined,
+          tokenIsContract: !tx.token?.address
             ? undefined
-            : Boolean(tokenCode && tokenCode !== '0x'),
-      };
+            : tokenCode === null
+              ? undefined
+              : Boolean(tokenCode && tokenCode !== '0x'),
+        };
 
-      // 5 + 6. Risk assessment and deterministic explanation.
-      const risks = assessRisks(tx, sim, ctx);
-      const explanation = composeExplanation(tx, sim, risks, account);
+        // 5–7. Risk, score, explanation.
+        const risks = assessRisks(tx, sim, ctx);
+        const readiness = scorePlan(sim, risks);
+        const explanation = composeExplanation(tx, sim, risks, account);
 
-      // 7. Optional AI narrative, grounded in the simulated facts only.
-      if (apiKey) {
-        try {
-          const narrative = await aiNarrative(createAiClient(apiKey), {
-            summary: tx.summary,
-            explanation,
-            simulation: { ok: sim.ok, revertReason: sim.revertReason, notes: sim.notes },
-            risks,
-          });
-          if (narrative) explanation.aiNarrative = narrative;
-        } catch {
-          /* AI narrative is optional — the deterministic explanation stands alone */
+        // 8. Optional AI narrative, grounded in simulated facts only.
+        if (aiAvailable) {
+          try {
+            const narrative = await aiNarrative(
+              createAiClient(apiKey, aiProxyUrl || undefined),
+              {
+                summary: tx.summary,
+                explanation,
+                simulation: {
+                  ok: sim.ok,
+                  revertReason: sim.revertReason,
+                  notes: sim.notes,
+                },
+                risks,
+              },
+            );
+            if (narrative) explanation.aiNarrative = narrative;
+          } catch {
+            /* optional — the deterministic explanation stands alone */
+          }
         }
-      }
 
-      setPlan({ tx, sim, risks, explanation });
-      setPhase('ready');
-    } catch (err) {
-      setErrorMsg(plainError(err));
-      setPhase('idle');
-    }
-  };
+        setPlan({ tx, sim, risks, explanation, readiness });
+        setPhase('ready');
+      } catch (err) {
+        setErrorMsg(plainError(err));
+        setPhase('idle');
+      }
+    },
+    [account, aiAvailable, apiKey, aiProxyUrl, client, network, persistTokens, registry, reader, rpc],
+  );
+
+  const handlePrepare = () => prepareFromText(input);
 
   /* ---- signing ---- */
 
@@ -331,9 +385,22 @@ export default function App() {
       setTxHash(hash);
       setPhase('pending');
       const receipt = await waitForReceipt(client, hash);
-      setPostflight(comparePostFlight(plan.tx, plan.sim, receipt, plan.tx.from));
+      const check = comparePostFlight(plan.tx, plan.sim, receipt, plan.tx.from);
+      setPostflight(check);
       setPhase('landed');
       refreshBalance(account);
+      setFlights(
+        recordFlight({
+          id: hash,
+          at: Date.now(),
+          network: networkKey,
+          summary: plan.tx.summary,
+          hash,
+          simOk: plan.sim.ok,
+          outcome: receipt.status === 'success' ? 'success' : 'reverted',
+          matched: check.matched,
+        }),
+      );
     } catch (err) {
       const code = (err as { code?: number })?.code;
       if (code === 4001) {
@@ -361,6 +428,51 @@ export default function App() {
     resetFlight();
     setInput('');
     refreshBalance(account);
+  };
+
+  /* ---- hangar ---- */
+
+  const handleScan = async () => {
+    if (!account) return;
+    setScanning(true);
+    setErrorMsg(null);
+    try {
+      setScan(await scanApprovals(rpc, account));
+    } catch (err) {
+      setErrorMsg(plainError(err));
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  const handleRevokeFromHangar = (record: ApprovalRecord) => {
+    const text = `revoke ${record.spender}'s access to my ${record.token.address}`;
+    setInput(text);
+    void prepareFromText(text);
+  };
+
+  /* ---- report ---- */
+
+  const handleCopyReport = async () => {
+    if (!plan) return;
+    const md = flightReportMarkdown({
+      networkLabel: network.chain.name,
+      tx: plan.tx,
+      sim: plan.sim,
+      risks: plan.risks,
+      explanation: plan.explanation,
+      postflight,
+      hash: txHash,
+      explorerHref: txHash ? txUrl(network, txHash) : null,
+      generatedAt: new Date().toISOString(),
+    });
+    try {
+      await navigator.clipboard.writeText(md);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setErrorMsg('Could not copy — your browser blocked clipboard access.');
+    }
   };
 
   const disabledReason = !provider
@@ -393,81 +505,135 @@ export default function App() {
         you decide whether to sign.
       </p>
 
-      <IntentConsole
-        value={input}
-        busy={phase === 'planning'}
-        disabledReason={disabledReason}
-        parseSource={parseSource}
-        onChange={setInput}
-        onSubmit={handlePrepare}
-      />
+      <nav className="view-tabs" aria-label="Workspace">
+        {(
+          [
+            ['fly', 'Fly'],
+            ['hangar', 'Hangar'],
+            ['sign', 'Signatures'],
+            ['log', 'Log'],
+          ] as [View, string][]
+        ).map(([key, label]) => (
+          <button
+            key={key}
+            className={view === key ? 'active' : ''}
+            aria-current={view === key ? 'page' : undefined}
+            onClick={() => setView(key)}
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
 
-      {parseFailure && (
-        <div className="error-note" role="alert">
-          {parseFailure.reason}
-          {parseFailure.suggestions.length > 0 && (
-            <div className="hint">
-              Try one of these:
-              <ul>
-                {parseFailure.suggestions.map((s) => (
-                  <li key={s}>
-                    <code>{s}</code>
-                  </li>
-                ))}
-              </ul>
+      {view === 'fly' && (
+        <>
+          <IntentConsole
+            value={input}
+            busy={phase === 'planning'}
+            disabledReason={disabledReason}
+            parseSource={parseSource}
+            onChange={setInput}
+            onSubmit={handlePrepare}
+          />
+
+          {parseFailure && (
+            <div className="error-note" role="alert">
+              {parseFailure.reason}
+              {parseFailure.suggestions.length > 0 && (
+                <div className="hint">
+                  Try one of these:
+                  <ul>
+                    {parseFailure.suggestions.map((s) => (
+                      <li key={s}>
+                        <code>{s}</code>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           )}
-        </div>
+
+          {errorMsg && (
+            <div className="error-note" role="alert">
+              {errorMsg}
+            </div>
+          )}
+
+          {plan && (phase === 'ready' || phase === 'signing') && (
+            <FlightPlan
+              plan={plan}
+              signing={phase === 'signing'}
+              copied={copied}
+              onSign={handleSign}
+              onDiscard={handleDiscard}
+              onCopyReport={handleCopyReport}
+            />
+          )}
+
+          {phase === 'pending' && txHash && (
+            <section className="panel">
+              <p className="panel-label">In flight</p>
+              <p className="busy">waiting for the transaction to land on Monad…</p>
+              <p style={{ marginTop: 12, fontSize: 13 }}>
+                <a href={txUrl(network, txHash)} target="_blank" rel="noreferrer">
+                  Track on MonadVision ↗
+                </a>
+              </p>
+            </section>
+          )}
+
+          {phase === 'landed' && postflight && txHash && (
+            <PostFlight
+              check={postflight}
+              explorerHref={txUrl(network, txHash)}
+              copied={copied}
+              onNewFlight={handleNewFlight}
+              onCopyReport={handleCopyReport}
+            />
+          )}
+        </>
       )}
 
-      {errorMsg && (
-        <div className="error-note" role="alert">
-          {errorMsg}
-        </div>
-      )}
-
-      {plan && (phase === 'ready' || phase === 'signing') && (
-        <FlightPlan
-          plan={plan}
-          signing={phase === 'signing'}
-          onSign={handleSign}
-          onDiscard={handleDiscard}
+      {view === 'hangar' && (
+        <ApprovalHangar
+          account={account}
+          scan={scan}
+          scanning={scanning}
+          onScan={handleScan}
+          onRevoke={handleRevokeFromHangar}
+          addressHref={(addr) => addressUrl(network, addr)}
         />
       )}
 
-      {phase === 'pending' && txHash && (
-        <section className="panel">
-          <p className="panel-label">In flight</p>
-          <p className="busy">waiting for the transaction to land on Monad…</p>
-          <p style={{ marginTop: 12, fontSize: 13 }}>
-            <a href={txUrl(network, txHash)} target="_blank" rel="noreferrer">
-              Track on MonadVision ↗
-            </a>
-          </p>
-        </section>
-      )}
+      {view === 'sign' && <SignatureExplainer expectedChainIds={[network.chainId]} />}
 
-      {phase === 'landed' && postflight && txHash && (
-        <PostFlight
-          check={postflight}
-          explorerHref={txUrl(network, txHash)}
-          onNewFlight={handleNewFlight}
+      {view === 'log' && (
+        <FlightLog
+          flights={flights}
+          txHref={(hash) => txUrl(network, hash)}
+          onClear={() => {
+            clearFlights(networkKey);
+            setFlights([]);
+          }}
         />
       )}
 
       <SettingsDrawer
         apiKey={apiKey}
+        aiProxyUrl={aiProxyUrl}
         tokens={tokens}
         addTokenBusy={addTokenBusy}
         addTokenError={addTokenError}
         onApiKeyChange={handleApiKeyChange}
+        onAiProxyUrlChange={handleAiProxyUrlChange}
         onAddToken={handleAddToken}
       />
 
       <p className="footer-note">
         Simulation runs live against Monad {network.label.toLowerCase()}
-        (debug_traceCall) · keys never leave your wallet · simulation is a best-effort
-        preview, not a guarantee
+        (debug_traceCall) · keys never leave your wallet · a simulation is a
+        best-effort preview, not a guarantee
         {network.faucetUrl && (
           <>
             {' '}

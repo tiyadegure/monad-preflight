@@ -558,6 +558,238 @@ a {
   }
 }
 
+/* ---------- readiness gauge ---------- */
+
+.gauge {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px;
+  border-radius: var(--r-2);
+  background: var(--surface-2);
+  margin-bottom: 16px;
+}
+.gauge-dial {
+  width: 64px;
+  height: 64px;
+  flex: none;
+  transform: rotate(-90deg);
+}
+.gauge-track,
+.gauge-arc {
+  fill: none;
+  stroke-width: 6;
+  stroke-linecap: round;
+}
+.gauge-track {
+  stroke: var(--line-2);
+}
+.gauge-arc {
+  transition: stroke-dasharray 400ms ease-out;
+}
+.gauge.clear .gauge-arc {
+  stroke: var(--go);
+}
+.gauge.caution .gauge-arc {
+  stroke: var(--caution);
+}
+.gauge.grounded .gauge-arc {
+  stroke: var(--danger);
+}
+.gauge-readout {
+  min-width: 0;
+}
+.gauge-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.gauge-score {
+  font-family: var(--font-data);
+  font-variant-numeric: tabular-nums;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.022em;
+}
+.gauge-verdict {
+  font-family: var(--font-data);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.gauge.clear .gauge-verdict {
+  color: var(--go);
+}
+.gauge.caution .gauge-verdict {
+  color: var(--caution);
+}
+.gauge.grounded .gauge-verdict {
+  color: var(--danger);
+}
+.gauge-advice {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.gauge-counts {
+  margin: 4px 0 0;
+  font-family: var(--font-data);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+.c-danger {
+  color: var(--danger);
+}
+.c-caution {
+  color: var(--caution);
+}
+
+/* ---------- view tabs (FLY / HANGAR / LOG) ---------- */
+
+.view-tabs {
+  display: flex;
+  gap: 4px;
+  margin-top: 20px;
+  border-bottom: 1px solid var(--line-1);
+}
+.view-tabs button {
+  font-family: var(--font-data);
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  background: transparent;
+  border: none;
+  border-radius: var(--r-1) var(--r-1) 0 0;
+  padding: 8px 14px;
+  min-height: 36px;
+}
+.view-tabs button.active {
+  color: var(--text-1);
+  font-weight: 700;
+  box-shadow: inset 0 -2px 0 var(--brand);
+}
+
+/* ---------- hangar (approvals) ---------- */
+
+.hangar-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--line-1);
+}
+.hangar-row:first-of-type {
+  border-top: none;
+}
+.hangar-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.hangar-amount {
+  font-family: var(--font-data);
+  font-variant-numeric: tabular-nums;
+  font-size: 14px;
+  font-weight: 700;
+}
+.hangar-amount.unlimited {
+  color: var(--danger);
+}
+.hangar-spender {
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+/* ---------- flight log ---------- */
+
+.log-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--line-1);
+}
+.log-row:first-of-type {
+  border-top: none;
+}
+.log-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.log-summary {
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.log-meta {
+  font-family: var(--font-data);
+  font-size: 11px;
+  color: var(--text-3);
+}
+.log-verdict {
+  font-family: var(--font-data);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.log-verdict.ok {
+  color: var(--go);
+}
+.log-verdict.bad {
+  color: var(--danger);
+}
+
+/* ---------- trace deep-dive ---------- */
+
+.trace-view {
+  margin-top: 16px;
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-2);
+  padding: 10px 12px;
+}
+.trace-view summary {
+  font-family: var(--font-data);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-3);
+  cursor: pointer;
+  min-height: 24px;
+}
+.trace-frames {
+  margin-top: 8px;
+}
+.trace-row {
+  font-family: var(--font-data);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--text-2);
+  padding: 3px 0;
+  overflow-wrap: anywhere;
+}
+.trace-row.errored {
+  color: var(--danger);
+}
+.trace-type {
+  color: var(--text-3);
+}
+
+/* ---------- balances ---------- */
+
+.balances-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
 .footer-note {
   margin-top: 32px;
   color: var(--text-3);

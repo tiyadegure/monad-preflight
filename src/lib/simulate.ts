@@ -30,29 +30,117 @@ import { UNLIMITED_THRESHOLD, shortAddress } from './format';
 /** Minimal JSON-RPC call function. Throws Error(message) on JSON-RPC error. */
 export type RpcCallFn = (method: string, params: unknown[]) => Promise<unknown>;
 
-/** fetch-based JSON-RPC 2.0 client with incrementing request ids. */
-export function makeHttpRpc(url: string): RpcCallFn {
-  let requestId = 0;
-  return async (method, params) => {
-    requestId += 1;
+/** How long we wait for one endpoint before trying the next one. */
+const DEFAULT_RPC_TIMEOUT_MS = 20_000;
+
+/** Parsed JSON-RPC 2.0 response body. */
+interface JsonRpcPayload {
+  result?: unknown;
+  error?: { code?: number; message?: string };
+}
+
+/**
+ * What happened when we asked one endpoint:
+ * - answered:    a well-formed JSON-RPC body came back (result OR error) —
+ *                either way, this is a real answer from a working endpoint.
+ * - unavailable: network failure, timeout, HTTP 5xx/429, or a garbled
+ *                body — worth trying the next endpoint.
+ * - rejected:    any other HTTP error (403, 404, ...) — the endpoint is up
+ *                but refused this request; retrying elsewhere is not our call.
+ */
+type EndpointReply =
+  | { kind: 'answered'; payload: JsonRpcPayload }
+  | { kind: 'unavailable' }
+  | { kind: 'rejected'; status: number };
+
+/** POST one JSON-RPC request to one endpoint, with a hard timeout. */
+async function callEndpoint(url: string, body: string, timeoutMs: number): Promise<EndpointReply> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ jsonrpc: '2.0', id: requestId, method, params }),
+      body,
+      signal: controller.signal,
     });
+    // 429 = rate limited, 5xx = server trouble: both mean "try elsewhere".
+    if (response.status === 429 || response.status >= 500) {
+      return { kind: 'unavailable' };
+    }
     if (!response.ok) {
-      throw new Error(`The RPC server answered with HTTP ${response.status} for ${method}.`);
+      return { kind: 'rejected', status: response.status };
     }
-    const payload = (await response.json()) as {
-      result?: unknown;
-      error?: { code?: number; message?: string };
-    };
-    if (payload.error) {
-      throw new Error(
-        payload.error.message ?? `RPC error ${payload.error.code ?? 'unknown'} for ${method}`,
-      );
+    const parsed: unknown = await response.json();
+    if (parsed === null || typeof parsed !== 'object') {
+      return { kind: 'unavailable' };
     }
-    return payload.result;
+    return { kind: 'answered', payload: parsed as JsonRpcPayload };
+  } catch {
+    // fetch threw: network down, DNS failure, unparseable body, or our
+    // timeout fired (AbortController). All of these mean "try elsewhere".
+    return { kind: 'unavailable' };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * fetch-based JSON-RPC 2.0 client with incrementing request ids.
+ *
+ * Accepts one url or an ordered list. Order matters: index 0 must be the
+ * most capable endpoint (the one that supports debug_traceCall).
+ *
+ * Reliability behavior:
+ * - Every request gets a hard timeout (default 20 s) via AbortController.
+ * - On network errors, timeouts, HTTP 5xx, or HTTP 429 it fails over to
+ *   the next url in order, wrapping around the end of the list.
+ * - A well-formed JSON-RPC { error } body is a real answer (a revert, an
+ *   unsupported method, ...) — it is thrown to the caller unchanged and
+ *   never triggers failover.
+ * - It remembers which endpoint answered last and starts there next time.
+ */
+export function makeHttpRpc(urls: string | string[], opts?: { timeoutMs?: number }): RpcCallFn {
+  const endpoints = typeof urls === 'string' ? [urls] : [...urls];
+  if (endpoints.length === 0) {
+    throw new Error('makeHttpRpc needs at least one RPC url.');
+  }
+  const timeoutMs = opts?.timeoutMs ?? DEFAULT_RPC_TIMEOUT_MS;
+
+  let requestId = 0;
+  // The endpoint that most recently gave a real answer. Every call starts
+  // there and only moves on when that endpoint stops responding.
+  let preferredIndex = 0;
+
+  return async (method, params) => {
+    for (let attempt = 0; attempt < endpoints.length; attempt += 1) {
+      const index = (preferredIndex + attempt) % endpoints.length;
+      const url = endpoints[index];
+      requestId += 1;
+      const body = JSON.stringify({ jsonrpc: '2.0', id: requestId, method, params });
+
+      const reply = await callEndpoint(url, body, timeoutMs);
+      if (reply.kind === 'unavailable') continue;
+      if (reply.kind === 'rejected') {
+        throw new Error(`The RPC server answered with HTTP ${reply.status} for ${method}.`);
+      }
+
+      preferredIndex = index;
+      if (reply.payload.error) {
+        throw new Error(
+          reply.payload.error.message ??
+            `RPC error ${reply.payload.error.code ?? 'unknown'} for ${method}`,
+        );
+      }
+      return reply.payload.result;
+    }
+
+    const tried = endpoints.length;
+    throw new Error(
+      tried === 1
+        ? 'We could not reach the network. We tried 1 endpoint and it did not answer. Please check your connection and try again.'
+        : `We could not reach the network. We tried ${tried} endpoints and none of them answered. Please check your connection and try again.`,
+    );
   };
 }
 

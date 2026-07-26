@@ -1,5 +1,7 @@
 import { createPublicClient, defineChain, http } from 'viem';
 import type { Chain, PublicClient } from 'viem';
+import { makeHttpRpc } from './simulate';
+import type { RpcCallFn } from './simulate';
 import type { Address } from './types';
 
 /**
@@ -39,6 +41,9 @@ const testnetChain = defineChain({
   blockExplorers: {
     default: { name: 'MonadVision', url: 'https://testnet.monadvision.com' },
   },
+  contracts: {
+    multicall3: { address: '0xcA11bde05977b3631167028862bE2a173976CA11' },
+  },
   testnet: true,
 });
 
@@ -49,6 +54,9 @@ const mainnetChain = defineChain({
   rpcUrls: { default: { http: ['https://rpc.monad.xyz'] } },
   blockExplorers: {
     default: { name: 'MonadVision', url: 'https://monadvision.com' },
+  },
+  contracts: {
+    multicall3: { address: '0xcA11bde05977b3631167028862bE2a173976CA11' },
   },
 });
 
@@ -99,6 +107,15 @@ export function getPublicClient(net: NetworkConfig): PublicClient {
   });
   clients.set(net.key, client);
   return client;
+}
+
+/**
+ * JSON-RPC caller for a network that tries every configured endpoint in
+ * registry order (index 0 first — it must stay the debug_traceCall-capable
+ * one) and fails over automatically when one stops answering.
+ */
+export function makeNetworkRpc(net: NetworkConfig): RpcCallFn {
+  return makeHttpRpc(net.rpcUrls);
 }
 
 /* ---- explorer links ---- */

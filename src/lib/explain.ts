@@ -48,6 +48,17 @@ function headlineFor(tx: PreparedTx, sim: SimulationResult): string {
       const symbol = tx.token?.symbol ?? 'tokens';
       return `You are about to revoke ${spender}'s access to your ${symbol}`;
     }
+    case 'wrap': {
+      // The amount is the native MON going in — formatted as MON.
+      const amount = tx.amountRaw ?? tx.value;
+      return `You are about to wrap ${formatTokenAmount(amount, NATIVE_MON)} into WMON`;
+    }
+    case 'unwrap': {
+      if (tx.token && tx.amountRaw !== undefined) {
+        return `You are about to unwrap ${formatTokenAmount(tx.amountRaw, tx.token)} back to MON`;
+      }
+      return 'You are about to unwrap WMON back to MON';
+    }
     case 'raw':
       return 'You are about to run a custom transaction';
   }
@@ -93,7 +104,7 @@ function joinClauses(parts: string[]): string {
   return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
 }
 
-function outcomeFor(sim: SimulationResult, userAddress: Address): string {
+function outcomeFor(tx: PreparedTx, sim: SimulationResult, userAddress: Address): string {
   if (!sim.ok) {
     const reason = sim.revertReason
       ? `The reason given: ${sim.revertReason}.`
@@ -104,6 +115,12 @@ function outcomeFor(sim: SimulationResult, userAddress: Address): string {
     );
   }
 
+  // Wrap/unwrap deserve a reassurance: it is the same money in a new coat.
+  const oneToOne =
+    tx.kind === 'wrap' || tx.kind === 'unwrap'
+      ? ' Every 1 MON equals exactly 1 WMON, and you can convert back at any time.'
+      : '';
+
   const clauses = [
     ...sim.assetChanges.map((c) => assetClause(c, userAddress)),
     ...sim.approvalChanges.map((c) => approvalClause(c, userAddress)),
@@ -111,10 +128,11 @@ function outcomeFor(sim: SimulationResult, userAddress: Address): string {
   if (clauses.length === 0) {
     return (
       'Our test run finished without errors, but it did not detect any balance ' +
-      'changes for your wallet. Check the details below before you sign.'
+      'changes for your wallet. Check the details below before you sign.' +
+      oneToOne
     );
   }
-  return `If you confirm this, ${joinClauses(clauses)}.`;
+  return `If you confirm this, ${joinClauses(clauses)}.${oneToOne}`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -197,7 +215,7 @@ export function composeExplanation(
 
   return {
     headline: headlineFor(tx, sim),
-    outcome: outcomeFor(sim, userAddress),
+    outcome: outcomeFor(tx, sim, userAddress),
     bullets,
   };
 }

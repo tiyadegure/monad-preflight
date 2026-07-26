@@ -208,6 +208,81 @@ describe('composeExplanation — revoke', () => {
   });
 });
 
+describe('composeExplanation — wrap', () => {
+  const WMON: TokenInfo = {
+    address: '0x4444444444444444444444444444444444444444',
+    symbol: 'WMON',
+    decimals: 18,
+  };
+  const tx = makeTx({
+    kind: 'wrap',
+    to: WMON.address as Address,
+    value: HALF_MON,
+    amountRaw: HALF_MON,
+    token: WMON,
+    counterparty: WMON.address as Address,
+  });
+  // What the simulator reports for a WETH9-style deposit():
+  // native MON leaves the user, WMON arrives (Deposit + Transfer events).
+  const sim = makeSim({
+    assetChanges: [
+      { party: USER, token: NATIVE_MON, deltaRaw: -HALF_MON },
+      { party: USER, token: WMON, deltaRaw: HALF_MON },
+    ],
+  });
+  const exp = composeExplanation(tx, sim, [], USER);
+
+  it('has the wrap headline', () => {
+    expect(exp.headline).toBe('You are about to wrap 0.5 MON into WMON');
+  });
+
+  it('mentions the 1:1 conversion and reversibility in the outcome', () => {
+    expect(exp.outcome).toContain('1 MON equals exactly 1 WMON');
+    expect(exp.outcome).toContain('convert back at any time');
+  });
+
+  it('turns the simulated asset changes into readable bullets', () => {
+    expect(exp.bullets).toContain('You send 0.5 MON');
+    expect(exp.bullets).toContain('You receive 0.5 WMON');
+  });
+});
+
+describe('composeExplanation — unwrap', () => {
+  const WMON: TokenInfo = {
+    address: '0x4444444444444444444444444444444444444444',
+    symbol: 'WMON',
+    decimals: 18,
+  };
+  const tx = makeTx({
+    kind: 'unwrap',
+    to: WMON.address as Address,
+    value: 0n,
+    amountRaw: 2n * 10n ** 18n,
+    token: WMON,
+    counterparty: WMON.address as Address,
+  });
+  const sim = makeSim({
+    assetChanges: [
+      { party: USER, token: WMON, deltaRaw: -(2n * 10n ** 18n) },
+      { party: USER, token: NATIVE_MON, deltaRaw: 2n * 10n ** 18n },
+    ],
+  });
+  const exp = composeExplanation(tx, sim, [], USER);
+
+  it('has the unwrap headline', () => {
+    expect(exp.headline).toBe('You are about to unwrap 2 WMON back to MON');
+  });
+
+  it('mentions the 1:1 conversion in the outcome', () => {
+    expect(exp.outcome).toContain('1 MON equals exactly 1 WMON');
+  });
+
+  it('shows WMON leaving and MON coming back as bullets', () => {
+    expect(exp.bullets).toContain('You send 2 WMON');
+    expect(exp.bullets).toContain('You receive 2 MON');
+  });
+});
+
 describe('composeExplanation — reverting transaction', () => {
   const tx = makeTx({
     kind: 'erc20-transfer',

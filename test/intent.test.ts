@@ -118,6 +118,71 @@ describe('parseIntent — approve / revoke', () => {
   });
 });
 
+describe('parseIntent — wrap / unwrap', () => {
+  it('parses "wrap 1 MON"', () => {
+    const intent = ok('wrap 1 MON');
+    expect(intent.action).toBe('wrap');
+    expect(intent.amount).toEqual({ value: '1' });
+    expect(intent.counterparty).toBeUndefined();
+  });
+
+  it('parses "wrap 0.5 mon into wmon"', () => {
+    const intent = ok('wrap 0.5 mon into wmon');
+    expect(intent.action).toBe('wrap');
+    expect(intent.amount).toEqual({ value: '0.5' });
+  });
+
+  it('parses "unwrap 2 WMON"', () => {
+    const intent = ok('unwrap 2 WMON');
+    expect(intent.action).toBe('unwrap');
+    expect(intent.amount).toEqual({ value: '2' });
+    expect(intent.counterparty).toBeUndefined();
+  });
+
+  it('parses "unwrap all my wmon"', () => {
+    const intent = ok('unwrap all my wmon');
+    expect(intent.action).toBe('unwrap');
+    expect(intent.amount).toEqual({ all: true });
+  });
+
+  it('parses "convert 1 mon to wmon" as wrap', () => {
+    const intent = ok('convert 1 mon to wmon');
+    expect(intent.action).toBe('wrap');
+    expect(intent.amount).toEqual({ value: '1' });
+  });
+
+  it('parses "convert 2 wmon to mon" as unwrap', () => {
+    const intent = ok('convert 2 wmon to mon');
+    expect(intent.action).toBe('unwrap');
+    expect(intent.amount).toEqual({ value: '2' });
+  });
+
+  it('ignores an address in a wrap sentence, with a note', () => {
+    const intent = ok(`wrap 1 MON to ${A}`);
+    expect(intent.action).toBe('wrap');
+    expect(intent.counterparty).toBeUndefined();
+    expect(intent.notes.length).toBeGreaterThan(0);
+  });
+
+  it('rejects a wrap without an amount', () => {
+    const result = fail('wrap some mon please');
+    expect(result.reason).toMatch(/how much|amount/i);
+  });
+
+  it('rejects "wrap all" with a fee explanation and numeric suggestions', () => {
+    const result = fail('wrap all my mon');
+    expect(result.reason).toMatch(/fee/i);
+    expect(result.reason).toMatch(/number/i);
+    expect(result.suggestions.some((s) => /\d/.test(s))).toBe(true);
+  });
+
+  it('rejects an unwrap without an amount but points at "all"', () => {
+    const result = fail('unwrap my wmon');
+    expect(result.reason).toMatch(/how much|amount/i);
+    expect(result.reason).toMatch(/all/i);
+  });
+});
+
 describe('parseIntent — failures give actionable suggestions', () => {
   it('rejects an empty string', () => {
     const result = fail('   ');

@@ -301,6 +301,89 @@ describe('caution rules', () => {
 });
 
 /* ------------------------------------------------------------------ */
+/* Wrap / unwrap rules                                                 */
+/* ------------------------------------------------------------------ */
+
+const WMON_ADDR: Address = '0x4444444444444444444444444444444444444444';
+const WMON: TokenInfo = { address: WMON_ADDR, symbol: 'WMON', decimals: 18 };
+
+function makeWrapTx(overrides: Partial<PreparedTx> = {}): PreparedTx {
+  return makeTx({
+    kind: 'wrap',
+    to: WMON_ADDR,
+    counterparty: WMON_ADDR,
+    data: '0xd0e30db0',
+    value: HALF_MON,
+    amountRaw: HALF_MON,
+    token: WMON,
+    summary: 'Wrap 0.5 MON into WMON',
+    ...overrides,
+  });
+}
+
+/** WMON is a contract and may look brand new — neither fact is a risk here. */
+const wrapCtx = () =>
+  makeCtx({
+    counterpartyIsContract: true,
+    counterpartyTxCount: 0,
+    counterpartyBalanceWei: 0n,
+  });
+
+describe('wrap / unwrap rules', () => {
+  it('a clean wrap produces exactly one finding: wrap-info', () => {
+    const sim = makeSim({
+      assetChanges: [
+        { party: SENDER, token: NATIVE_MON, deltaRaw: -HALF_MON },
+        { party: SENDER, token: WMON, deltaRaw: HALF_MON },
+      ],
+    });
+    const findings = assessRisks(makeWrapTx(), sim, wrapCtx());
+    // send-to-contract and fresh-recipient must NOT fire despite the
+    // contract counterparty with zero history in the context above.
+    expect(ids(findings)).toEqual(['wrap-info']);
+    const f = byId(findings, 'wrap-info')!;
+    expect(f.severity).toBe('info');
+    expect(f.title).toBe('Fully reversible');
+    expect(f.detail).toContain('1 MON always equals 1 WMON');
+    expect(f.detail.toLowerCase()).toContain('undo');
+  });
+
+  it('a clean unwrap also fires only wrap-info', () => {
+    const tx = makeWrapTx({
+      kind: 'unwrap',
+      value: 0n,
+      data: '0x2e1a7d4d',
+      summary: 'Unwrap 0.5 WMON back to MON',
+    });
+    const sim = makeSim({
+      assetChanges: [
+        { party: SENDER, token: WMON, deltaRaw: -HALF_MON },
+        { party: SENDER, token: NATIVE_MON, deltaRaw: HALF_MON },
+      ],
+    });
+    const findings = assessRisks(tx, sim, wrapCtx());
+    expect(ids(findings)).toEqual(['wrap-info']);
+  });
+
+  it('insufficient-balance still fires when wrap value + gas exceeds the balance', () => {
+    const sim = makeSim({ assetChanges: [] });
+    const tx = makeWrapTx();
+    const short = makeCtx({
+      counterpartyIsContract: true,
+      senderBalanceWei: tx.value + sim.gasCostWei - 1n,
+    });
+    expect(ids(assessRisks(tx, sim, short))).toContain('insufficient-balance');
+
+    // Exactly enough stays quiet, as for every other kind.
+    const exact = makeCtx({
+      counterpartyIsContract: true,
+      senderBalanceWei: tx.value + sim.gasCostWei,
+    });
+    expect(ids(assessRisks(tx, sim, exact))).not.toContain('insufficient-balance');
+  });
+});
+
+/* ------------------------------------------------------------------ */
 /* Info rules                                                          */
 /* ------------------------------------------------------------------ */
 
