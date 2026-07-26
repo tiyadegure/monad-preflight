@@ -1,20 +1,27 @@
 import type { Explanation, RiskFinding, SimulationResult } from '../lib/types';
 import type { Readiness } from '../lib/score';
+import type { FeeReading } from '../lib/gasoracle';
+import type { DriftReport } from '../lib/drift';
 import { ReadinessGauge } from './ReadinessGauge';
 import { TraceView } from './TraceView';
+import { DriftNotice } from './DriftNotice';
 
 export interface PlanView {
   explanation: Explanation;
   risks: RiskFinding[];
   sim: SimulationResult;
   readiness: Readiness;
+  fees: FeeReading | null;
 }
 
 interface Props {
   plan: PlanView;
   signing: boolean;
   copied: boolean;
+  drift: DriftReport | null;
   onSign: () => void;
+  onSignAnyway: () => void;
+  onDismissDrift: () => void;
   onDiscard: () => void;
   onCopyReport: () => void;
 }
@@ -28,11 +35,14 @@ export function FlightPlan({
   plan,
   signing,
   copied,
+  drift,
   onSign,
+  onSignAnyway,
+  onDismissDrift,
   onDiscard,
   onCopyReport,
 }: Props) {
-  const { explanation, risks, sim, readiness } = plan;
+  const { explanation, risks, sim, readiness, fees } = plan;
   let seq = 0;
   const delay = () => ({ animationDelay: `${seq++ * 80}ms` });
 
@@ -76,7 +86,25 @@ export function FlightPlan({
         </div>
       )}
 
+      {fees && (
+        <p className="fee-readout">
+          <span className="mono">{fees.verdict}</span>
+          {fees.advice && <> {fees.advice}</>}
+          {fees.notes.map((n) => (
+            <span key={n}> {n}</span>
+          ))}
+        </p>
+      )}
+
       <TraceView frames={sim.frames} events={sim.events} />
+
+      {drift && (
+        <DriftNotice
+          drift={drift}
+          onReview={onDismissDrift}
+          onSignAnyway={onSignAnyway}
+        />
+      )}
 
       <div className="sign-bar">
         <button

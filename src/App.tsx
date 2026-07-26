@@ -32,6 +32,14 @@ import { composeExplanation } from './lib/explain';
 import { comparePostFlight } from './lib/postflight';
 import { scorePlan } from './lib/score';
 import type { Readiness } from './lib/score';
+import type { DriftReport } from './lib/drift';
+import { compareSimulations } from './lib/drift';
+import { assessCounterparty } from './lib/reputation';
+import { readFees } from './lib/gasoracle';
+import type { FeeReading } from './lib/gasoracle';
+import { fingerprintAddress } from './lib/fingerprint';
+import type { Fingerprint } from './lib/fingerprint';
+import { formatTokenAmount } from './lib/format';
 import type { ApprovalRecord, ApprovalScan } from './lib/approvals';
 import { scanApprovals } from './lib/approvals';
 import type { FlightRecord } from './lib/history';
@@ -78,6 +86,10 @@ interface Plan {
   risks: RiskFinding[];
   explanation: Explanation;
   readiness: Readiness;
+  /** When the simulation was taken — drift detection compares against this. */
+  simulatedAtMs: number;
+  fees: FeeReading | null;
+  counterparty: Fingerprint | null;
 }
 
 const LS_API_KEY = 'preflight.apiKey';
@@ -148,6 +160,7 @@ export default function App() {
   const [flights, setFlights] = useState<FlightRecord[]>(() => loadFlights(networkKey));
   const [copied, setCopied] = useState(false);
   const [shareCopied, setShareCopied] = useState(false);
+  const [drift, setDrift] = useState<DriftReport | null>(null);
 
   const registry = useMemo(() => createRegistry(tokens), [tokens]);
 
@@ -373,11 +386,53 @@ export default function App() {
               : Boolean(tokenCode && tokenCode !== '0x'),
         };
 
-        // 5–7. Risk, score, explanation.
+        // 5. Risk rules, plus on-chain counterparty reputation.
         const risks = assessRisks(tx, sim, ctx);
+        const isApprovalTarget = tx.kind === 'erc20-approve';
+        if (ctx.counterpartyIsContract !== undefined) {
+          const rep = assessCounterparty(
+            {
+              isContract: ctx.counterpartyIsContract,
+              txCount: ctx.counterpartyTxCount ?? 0,
+              balanceWei: ctx.counterpartyBalanceWei ?? 0n,
+              codeSize: cpCode && cpCode !== '0x' ? (cpCode.length - 2) / 2 : 0,
+            },
+            { isApprovalTarget },
+          );
+          // Only add findings the rule engine did not already raise.
+          for (const f of rep.findings) {
+            if (!risks.some((r) => r.title === f.title)) risks.push(f);
+          }
+        }
+
+        // 6. Score and explanation.
         const readiness = scorePlan(sim, risks);
         const explanation = composeExplanation(tx, sim, risks, account);
         if (bookNotes.length > 0) explanation.bullets.push(...bookNotes);
+
+        // 7. Fee intelligence and counterparty identity — both optional
+        //    extras; a failure here must never block the flight plan.
+        const [fees, counterparty] = await Promise.all([
+          readFees(rpc, sim.gasUsed).catch(() => null),
+          tx.counterparty
+            ? fingerprintAddress(
+                {
+                  getCode: (a) => client.getCode({ address: a }).then((c) => c ?? '0x'),
+                  getStorageAt: (a, slot) =>
+                    client.getStorageAt({ address: a, slot }).then((v) => v ?? '0x'),
+                  call: (a, data) =>
+                    client
+                      .call({ to: a, data })
+                      .then((r) => r.data ?? '0x')
+                      .catch(() => '0x'),
+                },
+                tx.counterparty,
+              ).catch(() => null)
+            : Promise.resolve(null),
+        ]);
+        if (counterparty && counterparty.kind !== 'eoa') {
+          explanation.bullets.push(`${counterparty.label}: ${counterparty.detail}`);
+        }
 
         // 8. Optional AI narrative, grounded in simulated facts only.
         if (aiAvailable) {
@@ -401,7 +456,17 @@ export default function App() {
           }
         }
 
-        setPlan({ tx, sim, risks, explanation, readiness });
+        setPlan({
+          tx,
+          sim,
+          risks,
+          explanation,
+          readiness,
+          simulatedAtMs: Date.now(),
+          fees,
+          counterparty,
+        });
+        setDrift(null);
         setPhase('ready');
       } catch (err) {
         setErrorMsg(plainError(err));
@@ -429,10 +494,48 @@ export default function App() {
 
   /* ---- signing ---- */
 
-  const handleSign = useCallback(async () => {
+  /**
+   * Sign. Before handing the transaction to the wallet we re-simulate and
+   * compare: a plan the user read a minute ago may no longer be true. If
+   * anything material moved we stop and show what changed — `force` is how
+   * the user consciously overrides that.
+   */
+  const handleSign = useCallback(async (force = false) => {
     if (!plan || !provider) return;
     setPhase('signing');
     setErrorMsg(null);
+
+    if (!force) {
+      try {
+        const fresh = await simulateTx(plan.tx, rpc);
+        const report = compareSimulations(plan.sim, fresh, {
+          simulatedAtMs: plan.simulatedAtMs,
+          nowMs: Date.now(),
+          formatToken: (raw, token) => formatTokenAmount(raw, token),
+        });
+        setDrift(report.level === 'none' ? null : report);
+        if (report.level === 'material') {
+          // Refresh the stored plan so "show me the new plan" is accurate.
+          const freshRisks = assessRisks(plan.tx, fresh, {
+            senderBalanceWei: await client.getBalance({ address: plan.tx.from }),
+          });
+          setPlan({
+            ...plan,
+            sim: fresh,
+            risks: freshRisks,
+            readiness: scorePlan(fresh, freshRisks),
+            explanation: composeExplanation(plan.tx, fresh, freshRisks, plan.tx.from),
+            simulatedAtMs: Date.now(),
+          });
+          setPhase('ready');
+          return;
+        }
+      } catch {
+        // A failed re-check must not block signing — the wallet still
+        // shows its own confirmation, and the original plan stands.
+      }
+    }
+
     try {
       await ensureNetwork(provider, network);
       const hash = await sendTransaction(provider, plan.tx);
@@ -465,7 +568,7 @@ export default function App() {
         setPhase('ready');
       }
     }
-  }, [account, client, network, networkKey, plan, provider, refreshBalance, t]);
+  }, [account, client, network, networkKey, plan, provider, refreshBalance, rpc, t]);
 
   const handleDiscard = useCallback(() => {
     setPlan(null);
@@ -492,7 +595,7 @@ export default function App() {
       submit: handlePrepare,
       discard: handleDiscard,
       sign: () => {
-        if (phase === 'ready') void handleSign();
+        if (phase === 'ready') void handleSign(false);
       },
       nextTab: () =>
         setView((v) => VIEW_ORDER[(VIEW_ORDER.indexOf(v) + 1) % VIEW_ORDER.length]),
@@ -651,7 +754,10 @@ export default function App() {
               plan={plan}
               signing={phase === 'signing'}
               copied={copied}
-              onSign={handleSign}
+              drift={drift}
+              onSign={() => handleSign(false)}
+              onSignAnyway={() => handleSign(true)}
+              onDismissDrift={() => setDrift(null)}
               onDiscard={handleDiscard}
               onCopyReport={handleCopyReport}
             />

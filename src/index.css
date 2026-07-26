@@ -558,6 +558,20 @@ a {
   }
 }
 
+/* ---------- fee readout ---------- */
+
+.fee-readout {
+  margin: 14px 0 0;
+  padding: 10px 12px;
+  border-radius: var(--r-2);
+  background: var(--surface-2);
+  font-size: 13px;
+  color: var(--text-2);
+}
+.fee-readout .mono {
+  color: var(--text-1);
+}
+
 /* ---------- readiness gauge ---------- */
 
 .gauge {
