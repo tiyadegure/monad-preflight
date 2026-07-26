@@ -137,13 +137,13 @@ describe('comparePostFlight — happy path', () => {
       label: 'Outcome',
       simulated: 'will succeed',
       actual: 'succeeded',
-      matched: true,
+      status: 'matched',
     });
     expect(getLine(check, 'tUSD movement')).toEqual({
       label: 'tUSD movement',
       simulated: 'you sent 12 tUSD',
       actual: 'you sent 12 tUSD',
-      matched: true,
+      status: 'matched',
     });
     // Exactly: Outcome, tUSD movement, Network fee. No extra lines for the
     // counterparty's side and no unexpected-token line.
@@ -171,7 +171,7 @@ describe('comparePostFlight — ERC-20 mismatches', () => {
     const check = comparePostFlight(erc20Tx, sim, receipt, ALICE);
 
     const line = getLine(check, 'tUSD movement');
-    expect(line.matched).toBe(false);
+    expect(line.status).toBe('mismatched');
     expect(line.simulated).toBe('you sent 12 tUSD');
     expect(line.actual).toBe('you sent 11.5 tUSD');
     expect(check.matched).toBe(false);
@@ -186,7 +186,7 @@ describe('comparePostFlight — ERC-20 mismatches', () => {
     const check = comparePostFlight(erc20Tx, sim, receipt, ALICE);
 
     const line = getLine(check, 'tUSD movement');
-    expect(line.matched).toBe(false);
+    expect(line.status).toBe('mismatched');
     expect(line.actual).toBe('you received 0 tUSD');
     expect(check.matched).toBe(false);
   });
@@ -202,7 +202,7 @@ describe('comparePostFlight — ERC-20 mismatches', () => {
     const line = getLine(check, 'Unexpected token movement');
     expect(line.simulated).toBe('nothing');
     expect(line.actual).toBe('you received 5 token 0x9999…9999');
-    expect(line.matched).toBe(false);
+    expect(line.status).toBe('mismatched');
     expect(check.matched).toBe(false);
   });
 
@@ -233,7 +233,7 @@ describe('comparePostFlight — outcome', () => {
       label: 'Outcome',
       simulated: 'will succeed',
       actual: 'reverted',
-      matched: false,
+      status: 'mismatched',
     });
     expect(check.matched).toBe(false);
   });
@@ -247,7 +247,7 @@ describe('comparePostFlight — outcome', () => {
     const line = getLine(check, 'Outcome');
     expect(line.simulated).toBe('would fail');
     expect(line.actual).toBe('succeeded');
-    expect(line.matched).toBe(false);
+    expect(line.status).toBe('mismatched');
     expect(check.matched).toBe(false);
   });
 });
@@ -272,14 +272,14 @@ describe('comparePostFlight — native MON', () => {
       label: 'MON movement',
       simulated: 'you sent 1 MON',
       actual: 'you sent 1 MON',
-      matched: true,
+      status: 'matched',
     });
     expect(check.matched).toBe(true);
   });
 
-  it('omits the MON line when the simulated delta differs from -tx.value', () => {
-    // e.g. a contract call that pulled extra native value internally —
-    // a receipt cannot verify that, so no line is shown.
+  it('reports MON as unverified when the delta differs from the tx value', () => {
+    // e.g. a contract call that pulled extra native value internally. A
+    // receipt cannot show that, so we must say so rather than claim a ✓.
     const sim = makeSim({
       assetChanges: [{ party: ALICE, token: NATIVE_MON, deltaRaw: -2n * ONE_MON }],
     });
@@ -287,10 +287,17 @@ describe('comparePostFlight — native MON', () => {
 
     const check = comparePostFlight(nativeTx, sim, receipt, ALICE);
 
-    expect(hasLine(check, 'MON movement')).toBe(false);
+    const line = getLine(check, 'MON movement');
+    expect(line.status).toBe('unverified');
+    // Critically: the "actual" column must NOT echo a number we invented.
+    expect(line.actual).toBe('not recorded in the receipt');
+    expect(line.note).toBeTruthy();
+    expect(check.hasUnverified).toBe(true);
+    // Unverified never counts as disagreement.
+    expect(check.matched).toBe(true);
   });
 
-  it('omits the MON line when the transaction reverted', () => {
+  it('never claims a verified MON movement on a reverted transaction', () => {
     const sim = makeSim({
       ok: false,
       assetChanges: [{ party: ALICE, token: NATIVE_MON, deltaRaw: -ONE_MON }],
@@ -299,7 +306,9 @@ describe('comparePostFlight — native MON', () => {
 
     const check = comparePostFlight(nativeTx, sim, receipt, ALICE);
 
-    expect(hasLine(check, 'MON movement')).toBe(false);
+    // A reverted transfer moved nothing; success is what proves the move,
+    // so this can never read as matched.
+    expect(getLine(check, 'MON movement').status).toBe('unverified');
     // Outcome agrees (predicted failure, got revert), so overall still passes.
     expect(check.matched).toBe(true);
   });
@@ -310,7 +319,7 @@ describe('comparePostFlight — native MON', () => {
 /* ------------------------------------------------------------------ */
 
 describe('comparePostFlight — network fee', () => {
-  it('is always informational: matched even when the actual fee differs wildly', () => {
+  it('reports the real fee without claiming the estimate was verified', () => {
     const sim = makeSim(); // estimate: 0.000055 MON
     const receipt = makeReceipt({
       gasUsed: 500_000n,
@@ -319,13 +328,12 @@ describe('comparePostFlight — network fee', () => {
 
     const check = comparePostFlight(erc20Tx, sim, receipt, ALICE);
 
-    expect(getLine(check, 'Network fee')).toEqual({
-      label: 'Network fee',
-      simulated: 'about 0.000055 MON',
-      actual: '0.05 MON',
-      matched: true,
-    });
-    // The fee difference alone never fails the overall check.
+    const line = getLine(check, 'Network fee');
+    expect(line.simulated).toBe('about 0.000055 MON');
+    expect(line.actual).toBe('0.05 MON');
+    // A ~900x difference must never render as a ✓. Estimates are estimates.
+    expect(line.status).toBe('unverified');
+    // But a fee difference alone still never fails the overall check.
     expect(check.matched).toBe(true);
   });
 
@@ -335,7 +343,7 @@ describe('comparePostFlight — network fee', () => {
 
     const check = comparePostFlight(erc20Tx, sim, receipt, ALICE);
 
-    expect(getLine(check, 'Network fee').matched).toBe(true);
+    expect(getLine(check, 'Network fee').status).toBe('unverified');
   });
 });
 
@@ -355,7 +363,7 @@ describe('comparePostFlight — address case and log filtering', () => {
 
     const check = comparePostFlight(erc20Tx, sim, receipt, ALICE_MIXED);
 
-    expect(getLine(check, 'tUSD movement').matched).toBe(true);
+    expect(getLine(check, 'tUSD movement').status).toBe('matched');
     expect(hasLine(check, 'Unexpected token movement')).toBe(false);
     expect(check.matched).toBe(true);
   });

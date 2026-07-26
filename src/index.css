@@ -492,6 +492,13 @@ code,
 .pf-table td.bad {
   color: var(--danger);
 }
+.pf-note {
+  font-family: var(--font-ui);
+  font-size: 11px;
+  color: var(--text-3);
+  margin-top: 3px;
+  max-width: 34ch;
+}
 
 /* ---------- utility ---------- */
 

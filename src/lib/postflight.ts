@@ -22,6 +22,8 @@ import { formatTokenAmount, isSameAddress, shortAddress } from './format';
 
 const TRANSFER_TOPIC =
   '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+const APPROVAL_TOPIC =
+  '0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925';
 
 function topicToAddress(topic: Hex): Address {
   return `0x${topic.slice(-40)}` as Address;
@@ -41,13 +43,12 @@ export function comparePostFlight(
 ): PostFlightCheck {
   const lines: PostFlightCheck['lines'] = [];
 
-  // 1. Outcome
-  const outcomeMatched = sim.ok === (receipt.status === 'success');
+  // 1. Outcome — fully verifiable from the receipt status.
   lines.push({
     label: 'Outcome',
     simulated: sim.ok ? 'will succeed' : 'would fail',
     actual: receipt.status === 'success' ? 'succeeded' : 'reverted',
-    matched: outcomeMatched,
+    status: sim.ok === (receipt.status === 'success') ? 'matched' : 'mismatched',
   });
 
   // Actual ERC-20 deltas for the user, from receipt Transfer logs.
@@ -82,7 +83,7 @@ export function comparePostFlight(
       label: `${change.token.symbol} movement`,
       simulated: signedAmount(change.deltaRaw, change.token),
       actual: signedAmount(actual, change.token),
-      matched: actual === change.deltaRaw,
+      status: actual === change.deltaRaw ? 'matched' : 'mismatched',
     });
   }
 
@@ -98,31 +99,80 @@ export function comparePostFlight(
       label: 'Unexpected token movement',
       simulated: 'nothing',
       actual: signedAmount(actual, unknownToken),
-      matched: false,
+      status: 'mismatched',
     });
   }
 
-  // 4. Native MON — only verifiable when the prediction was exactly the
-  //    tx value (a receipt cannot show internal native transfers).
+  // 4. Native MON. A receipt carries no log of native value movement, so
+  //    in general we cannot confirm it — and we must not synthesize an
+  //    "actual" figure from the transaction we submitted and present that
+  //    as verification.
+  //
+  //    The one exception is a plain wallet-to-wallet transfer with no
+  //    calldata: if such a transaction succeeded, the EVM moved exactly
+  //    its value, with no other path possible. That we can honestly call
+  //    verified.
   const simNative = simUserChanges.find((c) => c.token.address === null);
-  if (simNative && receipt.status === 'success' && simNative.deltaRaw === -tx.value) {
+  if (simNative && simNative.deltaRaw !== 0n) {
+    const plainTransfer = tx.kind === 'native-transfer' && tx.data === '0x';
+    const provenBySuccess =
+      plainTransfer && receipt.status === 'success' && simNative.deltaRaw === -tx.value;
     lines.push({
       label: 'MON movement',
       simulated: signedAmount(simNative.deltaRaw, NATIVE_MON),
-      actual: signedAmount(-tx.value, NATIVE_MON),
-      matched: true,
+      actual: provenBySuccess
+        ? signedAmount(-tx.value, NATIVE_MON)
+        : 'not recorded in the receipt',
+      status: provenBySuccess ? 'matched' : 'unverified',
+      note: provenBySuccess
+        ? undefined
+        : 'A receipt does not record MON moved inside a contract call, so we cannot ' +
+          'confirm this one independently. Your wallet balance is the check here.',
     });
   }
 
-  // 5. Fee — informational only, so it never fails the overall check:
-  //    estimates legitimately differ from the charged fee.
+  // 5. Approvals. Allowance changes do emit an Approval event, but the
+  //    resulting allowance lives in contract storage; we only know an
+  //    event fired, not the final number. Report honestly.
+  for (const approval of sim.approvalChanges) {
+    if (!isSameAddress(approval.owner, userAddress)) continue;
+    const sawApprovalEvent = receipt.logs.some(
+      (log) =>
+        log.topics[0] === APPROVAL_TOPIC &&
+        log.topics.length === 3 &&
+        isSameAddress(log.address, approval.token.address ?? '') &&
+        isSameAddress(topicToAddress(log.topics[1]), userAddress),
+    );
+    lines.push({
+      label: `${approval.token.symbol} permission`,
+      simulated: approval.unlimited
+        ? 'unlimited spending granted'
+        : `spending up to ${formatTokenAmount(approval.amountRaw, approval.token)} granted`,
+      actual: sawApprovalEvent
+        ? 'the token confirmed a permission change'
+        : 'no permission change recorded',
+      status: sawApprovalEvent ? 'unverified' : 'mismatched',
+      note: sawApprovalEvent
+        ? 'The token reported a permission change, but the exact remaining amount ' +
+          'lives in the contract — check the Hangar to see it.'
+        : undefined,
+    });
+  }
+
+  // 6. Fee — informational. Estimates legitimately differ from the charged
+  //    fee, so this is reported, never counted as agreement or conflict.
   const actualFee = receipt.gasUsed * receipt.effectiveGasPrice;
   lines.push({
     label: 'Network fee',
     simulated: `about ${formatTokenAmount(sim.gasCostWei, NATIVE_MON)}`,
     actual: formatTokenAmount(actualFee, NATIVE_MON),
-    matched: true,
+    status: 'unverified',
+    note: 'Fee estimates are always approximate; this is what you were actually charged.',
   });
 
-  return { matched: lines.every((l) => l.matched), lines };
+  return {
+    matched: !lines.some((l) => l.status === 'mismatched'),
+    hasUnverified: lines.some((l) => l.status === 'unverified'),
+    lines,
+  };
 }

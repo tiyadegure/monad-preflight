@@ -26,7 +26,9 @@ export function PostFlight({
       <div className={`pf-verdict ${check.matched ? 'ok' : 'bad'}`}>
         <span className="dot" aria-hidden="true" />
         {check.matched
-          ? 'Reality matched the simulation'
+          ? check.hasUnverified
+            ? 'Everything we could check matched the simulation'
+            : 'Reality matched the simulation'
           : 'Reality differed from the simulation — read below'}
       </div>
 
@@ -42,10 +44,26 @@ export function PostFlight({
         <tbody>
           {check.lines.map((l, i) => (
             <tr key={i}>
-              <td>{l.label}</td>
+              <td>
+                {l.label}
+                {l.note && <div className="pf-note">{l.note}</div>}
+              </td>
               <td>{l.simulated}</td>
               <td>{l.actual}</td>
-              <td className={l.matched ? 'ok' : 'bad'}>{l.matched ? '✓' : '✗'}</td>
+              <td
+                className={
+                  l.status === 'matched' ? 'ok' : l.status === 'mismatched' ? 'bad' : ''
+                }
+              >
+                <span className="sr-only">
+                  {l.status === 'matched'
+                    ? 'verified as matching'
+                    : l.status === 'mismatched'
+                      ? 'does not match'
+                      : 'could not be verified'}
+                </span>
+                {l.status === 'matched' ? '✓' : l.status === 'mismatched' ? '✗' : '–'}
+              </td>
             </tr>
           ))}
         </tbody>

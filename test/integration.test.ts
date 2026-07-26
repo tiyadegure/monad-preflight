@@ -352,6 +352,8 @@ describe('pipeline: post-flight catches reality diverging from the simulation', 
     const check = comparePostFlight(tx, sim, receipt, USER);
     expect(check.matched).toBe(false);
     const movement = check.lines.find((l) => l.label.includes('tUSD'));
-    expect(movement?.matched).toBe(false);
+    expect(movement?.status).toBe('mismatched');
+    // The report must carry the disagreement through, not smooth it over.
+    expect(movement?.actual).toContain('1 tUSD');
   });
 });

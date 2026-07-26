@@ -207,9 +207,29 @@ export interface Explanation {
 /* Post-flight (after the tx lands)                                    */
 /* ------------------------------------------------------------------ */
 
+/**
+ * A single post-flight comparison line.
+ *
+ * `status` is deliberately three-valued. A receipt cannot prove everything
+ * — internal native transfers and allowance state are not in the log set —
+ * and claiming a ✓ for something we did not actually check would be the
+ * one lie this product must never tell.
+ */
+export type PostFlightLineStatus = 'matched' | 'mismatched' | 'unverified';
+
+export interface PostFlightLine {
+  label: string;
+  simulated: string;
+  actual: string;
+  status: PostFlightLineStatus;
+  /** Why we could not check, shown when status is 'unverified'. */
+  note?: string;
+}
+
 export interface PostFlightCheck {
-  /** Did on-chain reality match the pre-sign simulation? */
+  /** True only when nothing we could check disagreed with the simulation. */
   matched: boolean;
-  /** Per-line comparison in plain language */
-  lines: { label: string; simulated: string; actual: string; matched: boolean }[];
+  /** True when at least one line could not be verified from the receipt. */
+  hasUnverified: boolean;
+  lines: PostFlightLine[];
 }

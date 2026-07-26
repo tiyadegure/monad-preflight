@@ -77,16 +77,33 @@ const RISKS: RiskFinding[] = [
 ];
 
 const POSTFLIGHT_MIXED: PostFlightCheck = {
-  matched: false,
+  status: 'mismatched',
   lines: [
-    { label: 'Outcome', simulated: 'will succeed', actual: 'succeeded', matched: true },
-    { label: 'tUSD movement', simulated: 'you sent 10 tUSD', actual: 'you sent 9 tUSD', matched: false },
+    { label: 'Outcome', simulated: 'will succeed', actual: 'succeeded', status: 'matched' },
+    { label: 'tUSD movement', simulated: 'you sent 10 tUSD', actual: 'you sent 9 tUSD', status: 'mismatched' },
   ],
 };
 
 const POSTFLIGHT_CLEAN: PostFlightCheck = {
   matched: true,
-  lines: [{ label: 'Outcome', simulated: 'will succeed', actual: 'succeeded', matched: true }],
+  hasUnverified: false,
+  lines: [{ label: 'Outcome', simulated: 'will succeed', actual: 'succeeded', status: 'matched' }],
+};
+
+/** Everything checkable agreed, but something could not be checked at all. */
+const POSTFLIGHT_PARTIAL: PostFlightCheck = {
+  matched: true,
+  hasUnverified: true,
+  lines: [
+    { label: 'Outcome', simulated: 'will succeed', actual: 'succeeded', status: 'matched' },
+    {
+      label: 'MON movement',
+      simulated: 'you sent 1 MON',
+      actual: 'not recorded in the receipt',
+      status: 'unverified',
+      note: 'A receipt does not record MON moved inside a contract call.',
+    },
+  ],
 };
 
 const FOOTER =
@@ -192,6 +209,24 @@ describe('flightReportMarkdown — full report', () => {
     expect(md).toContain('Verdict: everything we checked on chain matched the simulation.');
   });
 
+  it('never claims a clean verdict when something could not be checked', () => {
+    const md = flightReportMarkdown({
+      networkLabel: 'Monad Testnet',
+      tx: makeTx(),
+      sim: makeSim(),
+      risks: [],
+      explanation: EXPLANATION,
+      postflight: POSTFLIGHT_PARTIAL,
+      generatedAt: GENERATED_AT,
+    });
+    // The unverified row must be visibly distinct from a pass.
+    expect(md).toContain('– not checked');
+    expect(md).not.toContain('| MON movement | you sent 1 MON | not recorded in the receipt | ✓ |');
+    // And the verdict must be hedged, not the unqualified "everything matched".
+    expect(md).toContain('everything we could check matched');
+    expect(md).not.toContain('Verdict: everything we checked on chain matched the simulation.');
+  });
+
   it('is deterministic: identical input produces the identical string', () => {
     expect(fullReport()).toBe(fullReport());
   });
@@ -259,7 +294,8 @@ describe('flightReportMarkdown — hygiene', () => {
       explanation: EXPLANATION,
       postflight: {
         matched: true,
-        lines: [{ label: 'Weird | label', simulated: 'a', actual: 'a', matched: true }],
+        hasUnverified: false,
+        lines: [{ label: 'Weird | label', simulated: 'a', actual: 'a', status: 'matched' }],
       },
       generatedAt: GENERATED_AT,
     });

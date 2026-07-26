@@ -75,7 +75,15 @@ import { FlightLog } from './components/FlightLog';
 import { SignatureExplainer } from './components/SignatureExplainer';
 import { ObserverPanel } from './components/ObserverPanel';
 
-type Phase = 'idle' | 'planning' | 'ready' | 'signing' | 'pending' | 'landed';
+type Phase =
+  | 'idle'
+  | 'planning'
+  | 'ready'
+  | 'signing'
+  | 'pending'
+  /** Broadcast, but we lost track of it. Never returns to a signable state. */
+  | 'sent'
+  | 'landed';
 type View = 'fly' | 'hangar' | 'sign' | 'observer' | 'log';
 
 const VIEW_ORDER: View[] = ['fly', 'hangar', 'sign', 'observer', 'log'];
@@ -558,9 +566,15 @@ export default function App() {
       }
     }
 
+    // Once the wallet has broadcast, the transaction exists on the network
+    // whatever happens next. From this point we must NEVER return to a state
+    // where the sign button is live again — a second click would broadcast a
+    // second transfer.
+    let broadcast = false;
     try {
       await ensureNetwork(provider, network);
       const hash = await sendTransaction(provider, plan.tx);
+      broadcast = true;
       setTxHash(hash);
       setPhase('pending');
       const receipt = await waitForReceipt(client, hash);
@@ -582,7 +596,16 @@ export default function App() {
       );
     } catch (err) {
       const code = (err as { code?: number })?.code;
-      if (code === 4001) {
+      if (broadcast) {
+        // Sent, but we lost track of it — the receipt wait timed out or the
+        // RPC dropped. Stay in 'sent': the explorer link is the source of
+        // truth and the sign button stays gone.
+        setErrorMsg(
+          'Your transaction was sent, but we lost track of it before it landed. ' +
+            'It may still confirm — check the explorer link below before trying again.',
+        );
+        setPhase('sent');
+      } else if (code === 4001) {
         setErrorMsg(t('error.declined'));
         setPhase('ready');
       } else {
@@ -785,15 +808,31 @@ export default function App() {
             />
           )}
 
-          {phase === 'pending' && txHash && (
+          {(phase === 'pending' || phase === 'sent') && txHash && (
             <section className="panel">
-              <p className="panel-label">In flight</p>
-              <p className="busy">waiting for the transaction to land on Monad…</p>
+              <p className="panel-label">
+                {phase === 'pending' ? 'In flight' : 'Sent — outcome unknown'}
+              </p>
+              {phase === 'pending' ? (
+                <p className="busy">waiting for the transaction to land on Monad…</p>
+              ) : (
+                <p className="plan-outcome">
+                  We stopped waiting, but the transaction is already on the network.
+                  Do not send it again until you have checked the explorer.
+                </p>
+              )}
               <p style={{ marginTop: 12, fontSize: 13 }}>
                 <a href={txUrl(network, txHash)} target="_blank" rel="noreferrer">
                   Track on MonadVision ↗
                 </a>
               </p>
+              {phase === 'sent' && (
+                <div className="sign-bar">
+                  <button className="btn-ghost" onClick={handleNewFlight}>
+                    Start a new flight
+                  </button>
+                </div>
+              )}
             </section>
           )}
 
