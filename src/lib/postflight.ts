@@ -90,15 +90,16 @@ export function comparePostFlight(
   // 3. Token movements the simulation did NOT predict — always a mismatch.
   for (const [key, actual] of actualByToken) {
     if (coveredTokens.has(key) || actual === 0n) continue;
-    const unknownToken: TokenInfo = {
-      address: key as Address,
-      symbol: `token ${shortAddress(key)}`,
-      decimals: 18,
-    };
+    // We have no decimals for a token the simulation never mentioned, and
+    // guessing 18 would print a confidently wrong number (a 6-decimal
+    // token would read as 0.000000000005 instead of 5). Show raw units and
+    // say they are raw units.
     lines.push({
       label: 'Unexpected token movement',
       simulated: 'nothing',
-      actual: signedAmount(actual, unknownToken),
+      actual:
+        `${actual < 0n ? 'you sent' : 'you received'} ${(actual < 0n ? -actual : actual).toString()} ` +
+        `raw units of the token at ${shortAddress(key)}`,
       status: 'mismatched',
     });
   }

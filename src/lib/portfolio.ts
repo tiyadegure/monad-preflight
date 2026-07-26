@@ -28,6 +28,12 @@ export interface ExposureLine {
   unlimitedSpenders: Address[];
   /** Spenders whose permission is capped at some amount */
   limitedSpenders: Address[];
+  /**
+   * False when this token was not in the balances we were given — its
+   * balance is unknown, not zero. Callers must not tell the user they
+   * hold nothing on the strength of a read that never happened.
+   */
+  balanceKnown: boolean;
   /** True when the entire (non-zero) balance is reachable */
   fullyExposed: boolean;
 }
@@ -122,6 +128,10 @@ export function computeExposure(input: ExposureInput): ExposureReport {
   const lines: ExposureLine[] = [];
   for (const [key, bucket] of buckets) {
     const balanceEntry = balanceByToken.get(key);
+    // Absent from the balances list means UNCHECKED, not zero. Reporting
+    // "you do not hold any" for a token we never read would hide real
+    // exposure behind a reassuring sentence.
+    const balanceKnown = balanceEntry !== undefined;
     const balanceRaw = balanceEntry?.raw ?? 0n;
     const token = balanceEntry?.token ?? bucket.token;
 
@@ -143,7 +153,15 @@ export function computeExposure(input: ExposureInput): ExposureReport {
       unlimitedSpenders.length > 0 ? balanceRaw : minBig(balanceRaw, cappedSum);
     const fullyExposed = balanceRaw > 0n && exposedRaw >= balanceRaw;
 
-    lines.push({ token, balanceRaw, exposedRaw, unlimitedSpenders, limitedSpenders, fullyExposed });
+    lines.push({
+      token,
+      balanceRaw,
+      exposedRaw,
+      unlimitedSpenders,
+      limitedSpenders,
+      fullyExposed,
+      balanceKnown,
+    });
   }
 
   lines.sort((a, b) => {
@@ -194,7 +212,12 @@ function buildAdvice(lines: ExposureLine[]): string[] {
     (l) => l.unlimitedSpenders.length > 0 && l.balanceRaw > 0n,
   );
   const unlimitedEmpty = lines.filter(
-    (l) => l.unlimitedSpenders.length > 0 && l.balanceRaw === 0n,
+    (l) => l.unlimitedSpenders.length > 0 && l.balanceKnown && l.balanceRaw === 0n,
+  );
+  // Approvals on tokens whose balance we never read. We cannot say whether
+  // funds are at risk, so we say exactly that.
+  const unlimitedUnknown = lines.filter(
+    (l) => l.unlimitedSpenders.length > 0 && !l.balanceKnown,
   );
 
   if (unlimitedFunded.length > 0) {
@@ -210,6 +233,15 @@ function buildAdvice(lines: ExposureLine[]): string[] {
     const names = unlimitedEmpty.map((l) => l.token.symbol).join(', ');
     advice.push(
       `You do not hold any ${names} right now, but the unlimited access is still open. Cancel (revoke) it before you add funds — otherwise anything you deposit can be taken straight away.`,
+    );
+  }
+
+  if (unlimitedUnknown.length > 0) {
+    const names = unlimitedUnknown.map((l) => l.token.symbol).join(', ');
+    advice.push(
+      `Unlimited access is open on ${names}, and we could not read your balance of ` +
+        `${unlimitedUnknown.length === 1 ? 'it' : 'them'} — so we cannot tell you how much is at risk. ` +
+        'Treat this as unresolved and revoke it unless you know why it is there.',
     );
   }
 

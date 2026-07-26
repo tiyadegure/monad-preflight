@@ -201,7 +201,13 @@ describe('comparePostFlight — ERC-20 mismatches', () => {
 
     const line = getLine(check, 'Unexpected token movement');
     expect(line.simulated).toBe('nothing');
-    expect(line.actual).toBe('you received 5 token 0x9999…9999');
+    // We have no decimals for a token the simulation never mentioned, so
+    // the amount must be shown as raw units and labelled as such — never
+    // formatted with a guessed 18 decimals, which would print a
+    // confidently wrong number for a 6-decimal token.
+    expect(line.actual).toContain('5000000000000000000');
+    expect(line.actual).toMatch(/raw units/);
+    expect(line.actual).toContain('0x9999…9999');
     expect(line.status).toBe('mismatched');
     expect(check.matched).toBe(false);
   });

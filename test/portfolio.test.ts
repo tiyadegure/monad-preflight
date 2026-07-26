@@ -198,13 +198,15 @@ describe('computeExposure', () => {
     expect(all).toMatch(/until you cancel/i);
   });
 
-  it('still lists a zero-balance token with an open permission', () => {
+  it('still lists a token we verified holds nothing, and says to revoke before funding', () => {
     const report = computeExposure({
-      balances: [],
+      // The balance was actually read, and it is zero.
+      balances: [{ token: TUSD, raw: 0n }],
       approvals: [appr(TUSD, SPENDER_A, MAX_UINT256, true)],
     });
     expect(report.lines).toHaveLength(1);
     const line = report.lines[0]!;
+    expect(line.balanceKnown).toBe(true);
     expect(line.balanceRaw).toBe(0n);
     expect(line.exposedRaw).toBe(0n);
     expect(line.fullyExposed).toBe(false);
@@ -213,5 +215,21 @@ describe('computeExposure', () => {
     expect(report.unlimitedCount).toBe(1);
     expect(report.headline).toBe('1 unlimited permission is open on this wallet.');
     expect(report.advice.join(' ')).toMatch(/before you add funds/i);
+  });
+
+  it('never claims the user holds nothing when the balance was never read', () => {
+    const report = computeExposure({
+      // The token has an approval but is absent from the balances list —
+      // unchecked, not empty. Saying "you hold none" here would hide real
+      // exposure behind a reassuring sentence.
+      balances: [],
+      approvals: [appr(TUSD, SPENDER_A, MAX_UINT256, true)],
+    });
+    const line = report.lines[0]!;
+    expect(line.balanceKnown).toBe(false);
+    const advice = report.advice.join(' ');
+    expect(advice).not.toMatch(/do not hold any/i);
+    expect(advice).toMatch(/could not read your balance/i);
+    expect(advice).toMatch(/cannot tell you how much is at risk/i);
   });
 });

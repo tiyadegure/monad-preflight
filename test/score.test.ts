@@ -105,3 +105,34 @@ describe('scorePlan', () => {
     expect(r.counts).toEqual({ danger: 1, caution: 2, info: 1 });
   });
 });
+
+describe('scorePlan — degraded simulation', () => {
+  const degradedSim: SimulationResult = {
+    ...okSim,
+    notes: ['Deep simulation unavailable on this RPC — ran a basic check instead.'],
+  };
+
+  it('never reads as Cleared when only a shallow check was possible', () => {
+    const r = scorePlan(degradedSim, []);
+    expect(r.band).not.toBe('clear');
+    expect(r.verdict).toBe('Hold');
+    expect(r.score).toBeLessThanOrEqual(60);
+  });
+
+  it('says the score means unknown, not approval', () => {
+    const r = scorePlan(degradedSim, []);
+    expect(r.advice).toMatch(/shallow check|cannot tell you what it moves/i);
+    expect(r.advice).not.toMatch(/Everything checks out/i);
+  });
+
+  it('still grounds a degraded plan that also reverts', () => {
+    const r = scorePlan({ ...degradedSim, ok: false }, []);
+    expect(r.band).toBe('grounded');
+  });
+
+  it('leaves a full simulation unaffected', () => {
+    const r = scorePlan(okSim, []);
+    expect(r.band).toBe('clear');
+    expect(r.score).toBe(100);
+  });
+});

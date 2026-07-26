@@ -52,6 +52,17 @@ export function scorePlan(sim: SimulationResult, risks: RiskFinding[]): Readines
   // A plan that cannot succeed is never "nearly fine".
   if (fatal || !sim.ok) score = Math.min(score, 20);
 
+  /*
+   * When the deep trace was unavailable we ran a shallow check instead:
+   * we know the call does not revert, and almost nothing else — no asset
+   * changes, no events, no approvals. A confident "Cleared · everything
+   * checks out" on that evidence is a lie of omission, and the danger is
+   * exactly the transaction whose harm lives in the effects we could not
+   * read. Cap at the top of the caution band so the verdict says "Hold".
+   */
+  const degraded = sim.notes.some((n) => n.toLowerCase().includes('basic check'));
+  if (degraded) score = Math.min(score, 60);
+
   const band: ReadinessBand =
     score >= 80 ? 'clear' : score >= 45 ? 'caution' : 'grounded';
 
@@ -62,6 +73,10 @@ export function scorePlan(sim: SimulationResult, risks: RiskFinding[]): Readines
   if (!sim.ok) {
     advice =
       'This transaction would fail if you sent it. Signing it would only cost you the network fee.';
+  } else if (degraded) {
+    advice =
+      'We could only run a shallow check on this one, so we cannot tell you what it moves. ' +
+      'Treat this score as "unknown", not as approval.';
   } else if (band === 'grounded') {
     advice =
       'Serious problems found. Read the warnings below before you decide — this is the kind of transaction people regret.';
