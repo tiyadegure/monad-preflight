@@ -63,13 +63,26 @@ is *actually* open right now, not what was ever granted.
 Click **Revoke** on the unlimited one. It flows straight back into the normal
 simulate → explain → sign path. Nothing is special-cased.
 
-### 5. Depth to close on (60s)
+### 5. A journey, not a transaction (45s)
+
+Type: `wrap 1 MON then send 0.5 WMON to <your second address>`
+
+The **journey strip** appears: two steps, each with its own simulation, its own
+explanation, and its own wallet signature. Sign step 1; when it lands, the strip
+offers **Continue — prepare step 2**. Skip a step or abandon the rest at any
+time.
+
+> *Batching UIs hide the second signature behind the first. PreFlight refuses
+> to: you see and sign every step, and a step whose outcome is unknown is shown
+> as exactly that — never as succeeded.*
+
+### 6. Depth to close on (60s)
 
 Pick whichever lands best for the audience:
 
 - **Observer tab** — paste any address, no wallet needed. Holdings, history, and
   who can spend its tokens. Good for "check your friend's wallet".
-- **中文 toggle** — the entire UI switches. Not machine-translated.
+- **中文 toggle** — every panel's chrome switches, and the console understands Chinese commands (`发送 0.1 MON 到 0x…`). Not machine-translated. (Text generated from chain data — risk findings, explanations — stays English for now.)
 - **Share** — copies a link that opens the exact same instruction for someone
   else. It pre-fills; it never auto-signs.
 - **Copy report** — a full markdown flight report for records or a support ticket.
@@ -79,7 +92,7 @@ Pick whichever lands best for the audience:
 ## If asked "what's actually running?"
 
 ```bash
-npm test          # 500 unit tests, offline and deterministic
+npm test          # 638 unit tests, offline and deterministic
 npm run test:e2e  # 13 live tests against real testnet AND mainnet RPCs
 ```
 

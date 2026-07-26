@@ -1,16 +1,19 @@
 import type { FlightRecord } from '../lib/history';
+import type { Lang } from '../lib/i18n';
+import { t } from '../lib/i18n';
 
 interface Props {
   flights: FlightRecord[];
   txHref: (hash: string) => string;
+  lang: Lang;
   onClear: () => void;
 }
 
-function verdict(f: FlightRecord): { cls: string; text: string } {
-  if (f.outcome === 'reverted') return { cls: 'bad', text: 'reverted' };
-  if (f.matched === true) return { cls: 'ok', text: 'verified ✓' };
-  if (f.matched === false) return { cls: 'bad', text: 'differed ✗' };
-  return { cls: '', text: 'landed' };
+function verdict(f: FlightRecord): { cls: string; key: string } {
+  if (f.outcome === 'reverted') return { cls: 'bad', key: 'log.reverted' };
+  if (f.matched === true) return { cls: 'ok', key: 'log.verified' };
+  if (f.matched === false) return { cls: 'bad', key: 'log.differed' };
+  return { cls: '', key: 'log.landed' };
 }
 
 /**
@@ -18,14 +21,12 @@ function verdict(f: FlightRecord): { cls: string; text: string } {
  * PreFlight on this network, with its post-flight verification verdict.
  * Stored only in this browser.
  */
-export function FlightLog({ flights, txHref, onClear }: Props) {
+export function FlightLog({ flights, txHref, lang, onClear }: Props) {
   return (
     <section className="panel" aria-label="Flight log">
-      <p className="panel-label">Flight log · this browser, this network</p>
+      <p className="panel-label">{t(lang, 'log.label')}</p>
 
-      {flights.length === 0 && (
-        <p className="hint">No flights yet — sign your first transaction and it lands here.</p>
-      )}
+      {flights.length === 0 && <p className="hint">{t(lang, 'log.empty')}</p>}
 
       {flights.map((f) => {
         const v = verdict(f);
@@ -36,11 +37,11 @@ export function FlightLog({ flights, txHref, onClear }: Props) {
               <span className="log-meta">
                 {new Date(f.at).toLocaleString()} ·{' '}
                 <a href={txHref(f.hash)} target="_blank" rel="noreferrer">
-                  explorer ↗
+                  {t(lang, 'log.explorer')}
                 </a>
               </span>
             </div>
-            <span className={`log-verdict ${v.cls}`}>{v.text}</span>
+            <span className={`log-verdict ${v.cls}`}>{t(lang, v.key)}</span>
           </div>
         );
       })}
@@ -48,7 +49,7 @@ export function FlightLog({ flights, txHref, onClear }: Props) {
       {flights.length > 0 && (
         <div className="sign-bar">
           <button className="btn-ghost" onClick={onClear}>
-            Clear log
+            {t(lang, 'log.clear')}
           </button>
         </div>
       )}

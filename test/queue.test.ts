@@ -65,6 +65,17 @@ describe('parseLegs', () => {
     expect(parseLegs('wrap 1 MON; ; send it;')).toEqual(['wrap 1 MON', 'send it']);
   });
 
+  it('splits on the full-width Chinese semicolon ；', () => {
+    expect(parseLegs('封装 1 MON；发送 0.5 WMON')).toEqual([
+      '封装 1 MON',
+      '发送 0.5 WMON',
+    ]);
+  });
+
+  it('splits on the Chinese connector 接着', () => {
+    expect(parseLegs('封装 1 MON 接着 发送')).toEqual(['封装 1 MON', '发送']);
+  });
+
   it('returns a single instruction as a one-element array', () => {
     expect(parseLegs('send 0.5 MON to 0x1234')).toEqual(['send 0.5 MON to 0x1234']);
   });
@@ -265,5 +276,18 @@ describe('isComplete', () => {
 
   it('is vacuously true for an empty queue', () => {
     expect(isComplete(createQueue([]))).toBe(true);
+  });
+});
+
+describe('parseLegs — review regressions', () => {
+  it('splits on 紧接着 cleanly, with no dangling 紧', () => {
+    expect(parseLegs('封装 1 MON 紧接着 发送 0.5 WMON')).toEqual([
+      '封装 1 MON',
+      '发送 0.5 WMON',
+    ]);
+  });
+
+  it('does not split 接着 inside words like 直接着手', () => {
+    expect(parseLegs('直接着手封装 1 MON')).toEqual(['直接着手封装 1 MON']);
   });
 });

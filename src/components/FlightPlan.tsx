@@ -2,6 +2,8 @@ import type { Explanation, RiskFinding, SimulationResult } from '../lib/types';
 import type { Readiness } from '../lib/score';
 import type { FeeReading } from '../lib/gasoracle';
 import type { DriftReport } from '../lib/drift';
+import type { Lang } from '../lib/i18n';
+import { t } from '../lib/i18n';
 import { ReadinessGauge } from './ReadinessGauge';
 import { TraceView } from './TraceView';
 import { DriftNotice } from './DriftNotice';
@@ -19,6 +21,7 @@ interface Props {
   signing: boolean;
   copied: boolean;
   drift: DriftReport | null;
+  lang: Lang;
   onSign: () => void;
   onSignAnyway: () => void;
   onDismissDrift: () => void;
@@ -36,6 +39,7 @@ export function FlightPlan({
   signing,
   copied,
   drift,
+  lang,
   onSign,
   onSignAnyway,
   onDismissDrift,
@@ -48,7 +52,7 @@ export function FlightPlan({
 
   return (
     <section className="panel" aria-label="Flight plan">
-      <p className="panel-label">Flight plan · simulated before you sign</p>
+      <p className="panel-label">{t(lang, 'plan.label')}</p>
 
       <ReadinessGauge readiness={readiness} />
 
@@ -70,13 +74,7 @@ export function FlightPlan({
               <span className="lamp" aria-hidden="true" />
               <div>
                 <div className="a-title">
-                  <span className="sr-only">
-                    {r.severity === 'danger'
-                      ? 'Serious warning: '
-                      : r.severity === 'caution'
-                        ? 'Caution: '
-                        : 'Note: '}
-                  </span>
+                  <span className="sr-only">{t(lang, `sr.${r.severity}`)} </span>
                   {r.title}
                 </div>
                 <p className="a-detail">{r.detail}</p>
@@ -88,9 +86,7 @@ export function FlightPlan({
 
       {explanation.aiNarrative && (
         <div className="ai-narrative">
-          <p className="panel-label">
-            AI co-pilot · written by Claude from the simulated facts above
-          </p>
+          <p className="panel-label">{t(lang, 'plan.aiLabel')}</p>
           {explanation.aiNarrative}
         </div>
       )}
@@ -105,7 +101,7 @@ export function FlightPlan({
         </p>
       )}
 
-      <TraceView frames={sim.frames} events={sim.events} />
+      <TraceView frames={sim.frames} events={sim.events} lang={lang} />
 
       {drift && (
         <DriftNotice
@@ -122,20 +118,20 @@ export function FlightPlan({
           disabled={signing}
         >
           {signing
-            ? 'Waiting for your wallet…'
+            ? t(lang, 'plan.waitingWallet')
             : sim.ok
-              ? 'Looks right — sign in wallet'
-              : 'Sign anyway (not recommended)'}
+              ? t(lang, 'plan.signButton')
+              : t(lang, 'plan.signAnyway')}
         </button>
         <button className="btn-ghost" onClick={onCopyReport} disabled={signing}>
-          {copied ? 'Copied ✓' : 'Copy report'}
+          {copied ? t(lang, 'report.copied') : t(lang, 'report.copy')}
         </button>
         <button className="btn-ghost" onClick={onDiscard} disabled={signing}>
-          Discard
+          {t(lang, 'plan.discard')}
         </button>
       </div>
       <p className="hint" style={{ marginTop: 10 }}>
-        PreFlight never touches your keys — your wallet shows the final confirmation.
+        {t(lang, 'plan.keysNote')}
       </p>
     </section>
   );

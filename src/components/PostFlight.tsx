@@ -1,12 +1,27 @@
-import type { PostFlightCheck } from '../lib/types';
+import type { PostFlightCheck, PostFlightLineStatus } from '../lib/types';
+import type { Lang } from '../lib/i18n';
+import { t } from '../lib/i18n';
 
 interface Props {
   check: PostFlightCheck;
   explorerHref: string;
   copied: boolean;
+  lang: Lang;
   onNewFlight: () => void;
   onCopyReport: () => void;
 }
+
+const MARK: Record<PostFlightLineStatus, string> = {
+  matched: '✓',
+  mismatched: '✗',
+  unverified: '–',
+};
+
+const SR_KEY: Record<PostFlightLineStatus, string> = {
+  matched: 'postflight.srMatched',
+  mismatched: 'postflight.srMismatched',
+  unverified: 'postflight.srUnverified',
+};
 
 /**
  * After landing: line-by-line comparison of what the simulation promised
@@ -16,28 +31,29 @@ export function PostFlight({
   check,
   explorerHref,
   copied,
+  lang,
   onNewFlight,
   onCopyReport,
 }: Props) {
   return (
     <section className="panel" aria-label="Post-flight verification">
-      <p className="panel-label">Post-flight · simulation vs on-chain reality</p>
+      <p className="panel-label">{t(lang, 'postflight.label')}</p>
 
       <div className={`pf-verdict ${check.matched ? 'ok' : 'bad'}`}>
         <span className="dot" aria-hidden="true" />
         {check.matched
           ? check.hasUnverified
-            ? 'Everything we could check matched the simulation'
-            : 'Reality matched the simulation'
-          : 'Reality differed from the simulation — read below'}
+            ? t(lang, 'postflight.matchedPartial')
+            : t(lang, 'postflight.matched')
+          : t(lang, 'postflight.differed')}
       </div>
 
       <table className="pf-table">
         <thead>
           <tr>
-            <th scope="col">Check</th>
-            <th scope="col">Simulated</th>
-            <th scope="col">Actual</th>
+            <th scope="col">{t(lang, 'postflight.colCheck')}</th>
+            <th scope="col">{t(lang, 'postflight.colSimulated')}</th>
+            <th scope="col">{t(lang, 'postflight.colActual')}</th>
             <th scope="col" aria-label="Match" />
           </tr>
         </thead>
@@ -55,14 +71,8 @@ export function PostFlight({
                   l.status === 'matched' ? 'ok' : l.status === 'mismatched' ? 'bad' : ''
                 }
               >
-                <span className="sr-only">
-                  {l.status === 'matched'
-                    ? 'verified as matching'
-                    : l.status === 'mismatched'
-                      ? 'does not match'
-                      : 'could not be verified'}
-                </span>
-                {l.status === 'matched' ? '✓' : l.status === 'mismatched' ? '✗' : '–'}
+                <span className="sr-only">{t(lang, SR_KEY[l.status])}</span>
+                {MARK[l.status]}
               </td>
             </tr>
           ))}
@@ -71,16 +81,16 @@ export function PostFlight({
 
       <p style={{ marginTop: 14, fontSize: 13 }}>
         <a href={explorerHref} target="_blank" rel="noreferrer">
-          View on MonadVision ↗
+          {t(lang, 'postflight.viewExplorer')}
         </a>
       </p>
 
       <div className="sign-bar">
         <button className="btn-ghost" onClick={onNewFlight}>
-          New flight
+          {t(lang, 'postflight.newFlight')}
         </button>
         <button className="btn-ghost" onClick={onCopyReport}>
-          {copied ? 'Copied ✓' : 'Copy report'}
+          {copied ? t(lang, 'report.copied') : t(lang, 'report.copy')}
         </button>
       </div>
     </section>

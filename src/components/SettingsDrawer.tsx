@@ -2,6 +2,8 @@ import { useState } from 'react';
 import type { TokenInfo } from '../lib/types';
 import type { AddressBookEntry } from '../lib/addressbook';
 import { removeEntry, saveEntry } from '../lib/addressbook';
+import type { Lang } from '../lib/i18n';
+import { t } from '../lib/i18n';
 import { shortAddress } from '../lib/format';
 
 interface Props {
@@ -11,6 +13,7 @@ interface Props {
   book: AddressBookEntry[];
   addTokenBusy: boolean;
   addTokenError: string | null;
+  lang: Lang;
   onApiKeyChange: (key: string) => void;
   onAiProxyUrlChange: (url: string) => void;
   onAddToken: (address: string) => void;
@@ -29,6 +32,7 @@ export function SettingsDrawer({
   book,
   addTokenBusy,
   addTokenError,
+  lang,
   onApiKeyChange,
   onAiProxyUrlChange,
   onAddToken,
@@ -51,6 +55,9 @@ export function SettingsDrawer({
     }
   };
 
+  const countLabel = (n: number, one: string, many: string) =>
+    n === 1 ? t(lang, one) : t(lang, many, { count: n });
+
   return (
     <section className="panel" aria-label="Settings">
       <button
@@ -59,19 +66,23 @@ export function SettingsDrawer({
         aria-expanded={open}
         style={{ width: '100%', textAlign: 'left' }}
       >
-        {open ? '▾' : '▸'} Settings — AI, tokens & contacts{' '}
+        {open ? '▾' : '▸'} {t(lang, 'settings.title')}{' '}
         <span className="parse-source">
-          {apiKey || aiProxyUrl ? ' · AI on' : ' · AI off (rule-based mode)'}
-          {tokens.length ? ` · ${tokens.length} token${tokens.length > 1 ? 's' : ''}` : ''}
-          {book.length ? ` · ${book.length} contact${book.length > 1 ? 's' : ''}` : ''}
+          {' · '}
+          {apiKey || aiProxyUrl ? t(lang, 'settings.aiOn') : t(lang, 'settings.aiOff')}
+          {tokens.length
+            ? ` · ${countLabel(tokens.length, 'settings.tokenOne', 'settings.tokensMany')}`
+            : ''}
+          {book.length
+            ? ` · ${countLabel(book.length, 'settings.contactOne', 'settings.contactsMany')}`
+            : ''}
         </span>
       </button>
 
       {open && (
         <div className="settings-row" style={{ marginTop: 16 }}>
           <label>
-            Anthropic API key (optional — enables Claude parsing & narratives; stored
-            only in this browser)
+            {t(lang, 'settings.apiKey')}
             <input
               type="password"
               value={apiKey}
@@ -82,8 +93,7 @@ export function SettingsDrawer({
           </label>
 
           <label>
-            AI proxy endpoint (production alternative — the key stays on your own
-            server; see docs/ai-proxy.md)
+            {t(lang, 'settings.proxyUrl')}
             <input
               value={aiProxyUrl}
               onChange={(e) => onAiProxyUrlChange(e.target.value.trim())}
@@ -94,7 +104,7 @@ export function SettingsDrawer({
           </label>
 
           <label>
-            Teach PreFlight a token — paste its contract address
+            {t(lang, 'settings.addToken')}
             <span style={{ display: 'flex', gap: 8 }}>
               <input
                 value={tokenInput}
@@ -111,7 +121,7 @@ export function SettingsDrawer({
                   setTokenInput('');
                 }}
               >
-                {addTokenBusy ? 'Reading…' : 'Add'}
+                {addTokenBusy ? t(lang, 'settings.reading') : t(lang, 'settings.add')}
               </button>
             </span>
           </label>
@@ -120,15 +130,15 @@ export function SettingsDrawer({
 
           {tokens.length > 0 && (
             <p className="hint">
-              Known tokens:{' '}
+              {t(lang, 'settings.knownTokens')}{' '}
               {tokens
-                .map((t) => `${t.symbol} (${shortAddress(t.address ?? '')})`)
+                .map((tok) => `${tok.symbol} (${shortAddress(tok.address ?? '')})`)
                 .join(' · ')}
             </p>
           )}
 
           <label>
-            Save a contact — then just say "send 1 MON to alice"
+            {t(lang, 'settings.saveContact')}
             <span style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <input
                 value={bookName}
@@ -150,7 +160,7 @@ export function SettingsDrawer({
                 disabled={!bookName.trim() || !bookAddress.trim()}
                 onClick={addContact}
               >
-                Save
+                {t(lang, 'settings.save')}
               </button>
             </span>
           </label>
@@ -171,17 +181,14 @@ export function SettingsDrawer({
                     className="btn-ghost"
                     onClick={() => onBookChange(removeEntry(entry.name))}
                   >
-                    Remove
+                    {t(lang, 'settings.remove')}
                   </button>
                 </div>
               ))}
             </div>
           )}
 
-          <p className="hint">
-            Everything on this panel is stored in your browser only. PreFlight has no
-            server and no account.
-          </p>
+          <p className="hint">{t(lang, 'settings.localOnly')}</p>
         </div>
       )}
     </section>

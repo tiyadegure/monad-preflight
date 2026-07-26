@@ -26,7 +26,8 @@ almost nothing shows *what will actually happen*.
 
 | | |
 |---|---|
-| 🗣 **Plain-language intents** | `send 0.5 MON to alice`, `approve … to spend 100 USDC`, `wrap 1 MON`, `unwrap all my WMON`, `revoke …'s access` — or paste a raw transaction JSON copied from any dapp popup and PreFlight explains what it was about to do |
+| 🗣 **Plain-language intents** | `send 0.5 MON to alice`, `approve … to spend 100 USDC`, `wrap 1 MON`, `unwrap all my WMON`, `revoke …'s access` — or paste a raw transaction JSON copied from any dapp popup and PreFlight explains what it was about to do. Simplified Chinese works too (`发送 0.5 MON 到 0x…`), deterministically, without AI |
+| 🧳 **Multi-leg journeys** | `wrap 1 MON then send 0.5 WMON to 0x…` becomes an ordered journey — every leg is simulated, explained and signed *individually*. A second signature is never hidden behind the first |
 | 🔬 **Real simulation** | Every plan runs through `debug_traceCall` on a live RPC: full call tree, decoded events, revert reasons, gas — not a guess, a dry run against current chain state |
 | 🎯 **Readiness gauge** | One score, one verdict (Cleared / Hold / Grounded), one sentence of advice — because nobody reads fifteen warnings |
 | 💡 **Asset-change preview** | "You send 0.5 MON · 0x12…cd receives 0.5 MON · fee ≈ 0.0002 MON" — decoded from the trace's Transfer/Approval events and native value flows |
@@ -37,7 +38,7 @@ almost nothing shows *what will actually happen*.
 | 👁 **Observer mode** | Inspect any address read-only, no wallet needed — check a friend's wallet for drainer approvals, or audit before you interact |
 | ✍️ **Your keys, your wallet** | PreFlight never touches keys; your own wallet signs. It only *prepares* and *explains* |
 | ✅ **Post-flight verification** | After mining, the receipt is compared against the pre-sign simulation: outcome, every token movement, fee — matched or flagged |
-| 🌏 **中文 / English** | Bilingual dictionary with auto-detection and a switcher, wired through the header and shell; the deeper panels are still English-only (see roadmap) |
+| 🌏 **中文 / English** | Bilingual dictionary (120 keys per language, parity-tested) wired through every panel, plus Chinese intent parsing. Text generated from chain data (risk findings, explanations) is English-only today — see roadmap |
 | 🤖 **Optional AI co-pilot** | Claude parses phrasings the rule grammar can't and writes a short narrative — grounded strictly in the simulator's verified facts, clearly labeled. The app is 100% functional without it |
 
 Full feature reference: **[docs/FEATURES.md](docs/FEATURES.md)**.
@@ -76,7 +77,7 @@ networks for you — Monad Testnet (10143) by default, Mainnet (143) via the
 switcher. Testnet gas: [faucet](https://faucet.monad.xyz).
 
 ```bash
-npm test             # 517 unit tests (offline, deterministic)
+npm test             # 638 unit tests (offline, deterministic)
 npm run test:e2e     # 13 LIVE tests against real Monad testnet AND mainnet RPCs —
                      # discovers a real token from recent blocks and verifies the
                      # whole pipeline, plus RPC failover, fee reading, contract
@@ -133,10 +134,9 @@ decimal math), public `faucet()` giving 100 tUSD per call. Paste the address int
 - **Swap support** via an on-chain DEX router, same prepare→simulate→explain flow
 - **Wallet-extension companion** — intercept any dapp's request and pre-flight it in place
 - **Risk API** — the simulation + risk engine as a service for wallets and dapps
-- Batch transactions / account abstraction (EIP-5792 `wallet_sendCalls`)
+- *Sending* batch transactions (EIP-5792 `wallet_sendCalls`) — the batch *explainer* is shipped; composing and submitting batches is not
 - Historical approval scanning beyond the recent-block window (indexer-backed)
-- Finish the Chinese translation through the flight-plan, hangar and post-flight panels
-- Wire the multi-leg queue (`src/lib/queue.ts`, built and tested) into the UI
+- Translate the generated prose (risk findings, explanations, simulation notes) into Chinese — the UI chrome is fully bilingual today
 
 ## AI usage disclosure
 

@@ -52,6 +52,15 @@ import { fetchBalances } from './lib/balances';
 import { computeExposure } from './lib/portfolio';
 import type { Lang } from './lib/i18n';
 import { detectLang, saveLang, t as translate } from './lib/i18n';
+import type { FlightQueue } from './lib/queue';
+import {
+  MAX_LEGS,
+  activeLeg,
+  advance,
+  createQueue,
+  markLeg,
+  splitLegs,
+} from './lib/queue';
 import { decodeShareLink, encodeShareLink } from './lib/sharelink';
 import { installShortcuts } from './lib/shortcuts';
 import { loadBook, resolveNames } from './lib/addressbook';
@@ -70,6 +79,7 @@ import {
 import { aiNarrative, aiParseIntent, createAiClient } from './lib/claude';
 import { StatusStrip } from './components/StatusStrip';
 import { IntentConsole } from './components/IntentConsole';
+import { QueueStrip } from './components/QueueStrip';
 import { FlightPlan } from './components/FlightPlan';
 import { PostFlight } from './components/PostFlight';
 import { SettingsDrawer } from './components/SettingsDrawer';
@@ -206,6 +216,21 @@ export default function App() {
   const [txHash, setTxHash] = useState<Hex | null>(null);
   const [postflight, setPostflight] = useState<PostFlightCheck | null>(null);
 
+  /**
+   * Multi-leg journey ("wrap 1 MON then send 0.5 WMON to alice"). Each
+   * leg walks the full prepare → simulate → explain → sign flow on its
+   * own; the queue only remembers where the journey stands. A second
+   * signature is never hidden behind the first.
+   */
+  const [queue, setQueue] = useState<FlightQueue | null>(null);
+  /**
+   * Journeys need identities. createQueue reuses ids (leg-1, leg-2, …), so
+   * a receipt that arrives after the user has already started a NEW journey
+   * could otherwise stamp its outcome onto the new journey's first leg.
+   * Prefixing every id with a monotonic epoch makes that impossible.
+   */
+  const queueEpoch = useRef(0);
+
   const [scan, setScan] = useState<ApprovalScan | null>(null);
   const [scanning, setScanning] = useState(false);
   const [health, setHealth] = useState<HealthReport | null>(null);
@@ -230,6 +255,11 @@ export default function App() {
   useEffect(() => {
     networkKeyRef.current = networkKey;
   }, [networkKey]);
+  /** Current language, readable from long-lived event handlers. */
+  const langRef = useRef(lang);
+  useEffect(() => {
+    langRef.current = lang;
+  }, [lang]);
 
   const refreshBalance = useCallback(
     (addr: Address | null) => {
@@ -255,15 +285,18 @@ export default function App() {
         // users, that plan is no longer theirs — drop it rather than leave
         // a signable transaction belonging to someone else on screen.
         if (current && next?.toLowerCase() !== current.toLowerCase()) {
+          // Invalidate any prepare still in flight: a plan built for the
+          // old account must not install itself under the new one right
+          // after we told the user it was cleared.
+          prepareRun.current += 1;
           setPlan(null);
           setPostflight(null);
           setTxHash(null);
           setDrift(null);
           setScan(null);
+          setQueue(null);
           setPhase('idle');
-          setErrorMsg(
-            'Your wallet switched accounts, so the prepared transaction was cleared. Prepare it again if you still want it.',
-          );
+          setErrorMsg(translate(langRef.current, 'error.accountSwitched'));
         }
         return next;
       });
@@ -309,6 +342,7 @@ export default function App() {
     setParseFailure(null);
     setErrorMsg(null);
     setCopied(false);
+    setQueue(null);
     setPhase('idle');
   }, []);
 
@@ -627,9 +661,76 @@ export default function App() {
     ],
   );
 
+  /**
+   * Entry point for the console. A single instruction flies as before; an
+   * instruction with connectors ("then", "然后", newlines, semicolons)
+   * becomes a journey — an ordered queue where each leg is prepared,
+   * explained and signed on its own.
+   */
+  /**
+   * True while the current journey has already put something on the
+   * network (a signed, failed, or broadcast-but-unconfirmed leg) and is
+   * not yet finished. Preparing fresh from the console in that state
+   * would rebuild the queue from the same text and offer an already-
+   * executed step for signing again — so it is refused until the user
+   * explicitly continues, skips, or abandons.
+   */
+  const journeyHasBroadcast =
+    queue !== null &&
+    queue.legs.some((l) => l.status === 'pending' || l.status === 'active') &&
+    queue.legs.some(
+      (l) => l.status === 'signed' || l.status === 'failed' || l.hash !== undefined,
+    );
+
+  const startFlight = useCallback(
+    (rawText: string) => {
+      // The same guard the Prepare button gets from disabledReason — the
+      // keyboard shortcut must not conjure a journey no one can fly.
+      if (!account) return;
+      if (journeyHasBroadcast) {
+        // Show the refusal where the journey strip lives, even when the
+        // request came from another tab (e.g. a Hangar revoke).
+        setView('fly');
+        setErrorMsg(t('queue.finishFirst'));
+        return;
+      }
+      const trimmed = rawText.trim();
+      // Raw JSON is always one instruction — pretty-printed JSON contains
+      // newlines, and splitting it into "legs" would shred it.
+      const allLegs = trimmed.startsWith('{') ? [trimmed] : splitLegs(trimmed);
+      const legs = allLegs.slice(0, MAX_LEGS);
+      if (legs.length > 1) {
+        const q = createQueue(legs);
+        const epoch = ++queueEpoch.current;
+        setQueue({
+          ...q,
+          legs: q.legs.map((l) => ({ ...l, id: `j${epoch}-${l.id}` })),
+        });
+        void prepareFromText(legs[0] ?? '');
+      } else {
+        setQueue(null);
+        void prepareFromText(rawText);
+      }
+      if (allLegs.length > MAX_LEGS) {
+        // After prepareFromText's own reset, so the notice survives it.
+        setErrorMsg(
+          t('queue.truncated', {
+            given: allLegs.length,
+            max: MAX_LEGS,
+            dropped: allLegs.length - MAX_LEGS,
+          }),
+        );
+      }
+    },
+    [account, journeyHasBroadcast, prepareFromText, t],
+  );
+
   const handlePrepare = useCallback(() => {
-    void prepareFromText(input);
-  }, [input, prepareFromText]);
+    // Never mid-signature or mid-flight: a keystroke must not rebuild the
+    // world while a wallet confirmation or a receipt is still in the air.
+    if (phase === 'planning' || phase === 'signing' || phase === 'pending') return;
+    startFlight(input);
+  }, [input, phase, startFlight]);
 
   /* ---- signing ---- */
 
@@ -665,6 +766,11 @@ export default function App() {
 
     setPhase('signing');
     setErrorMsg(null);
+
+    // Pin down WHICH journey leg this signature belongs to, now — by the
+    // time the receipt arrives the user may have moved on to a different
+    // journey, and the outcome must never be written onto someone else.
+    const legIdAtSign = queue ? (activeLeg(queue)?.id ?? null) : null;
 
     if (!force) {
       try {
@@ -713,16 +819,37 @@ export default function App() {
     // where the sign button is live again — a second click would broadcast a
     // second transfer.
     let broadcast = false;
+    let sentHash: Hex | null = null;
     try {
       await ensureNetwork(provider, network);
       const hash = await sendTransaction(provider, plan.tx);
       broadcast = true;
+      sentHash = hash;
       setTxHash(hash);
       setPhase('pending');
       const receipt = await waitForReceipt(client, hash);
       const check = comparePostFlight(plan.tx, plan.sim, receipt, plan.tx.from);
       setPostflight(check);
       setPhase('landed');
+      // In a journey, this leg is now over — record how it ended so the
+      // strip can show it and the Continue button can move on.
+      setQueue((q) => {
+        if (!q || !legIdAtSign) return q;
+        const leg = q.legs.find((l) => l.id === legIdAtSign);
+        if (!leg || leg.status !== 'active') return q;
+        const marked = markLeg(
+          q,
+          legIdAtSign,
+          receipt.status === 'success' ? 'signed' : 'failed',
+          { hash },
+        );
+        // If that was the final step, close the journey out properly so
+        // the strip reads "all steps finished" instead of pointing at a
+        // step forever.
+        return marked.legs.some((l) => l.status === 'pending')
+          ? marked
+          : advance(marked);
+      });
       refreshBalance(account);
       setFlights(
         recordFlight({
@@ -747,6 +874,18 @@ export default function App() {
             'It may still confirm — check the explorer link below before trying again.',
         );
         setPhase('sent');
+        // The leg stays 'active' — we honestly do not know how it ended.
+        // The note (and the hash, so the explorer link works) travel with
+        // it even if the user later skips past this step.
+        setQueue((q) => {
+          if (!q || !legIdAtSign) return q;
+          const leg = q.legs.find((l) => l.id === legIdAtSign);
+          if (!leg || leg.status !== 'active') return q;
+          return markLeg(q, legIdAtSign, 'active', {
+            note: t('queue.sentNote'),
+            ...(sentHash ? { hash: sentHash } : {}),
+          });
+        });
       } else if (code === 4001) {
         setErrorMsg(t('error.declined'));
         setPhase('ready');
@@ -755,12 +894,18 @@ export default function App() {
         setPhase('ready');
       }
     }
-  }, [account, client, network, networkKey, plan, provider, refreshBalance, rpc, t]);
+  }, [account, client, network, networkKey, plan, provider, queue, refreshBalance, rpc, t]);
 
   const handleDiscard = useCallback(() => {
+    // Stop means stop: a prepare still running must not resolve seconds
+    // later and resurrect a signable plan the user just dismissed.
+    prepareRun.current += 1;
     setPlan(null);
     setPhase('idle');
     setParseSource(null);
+    // Discarding means "stop" — in a journey that stops the journey too.
+    // Deliberately moving past one step is what "Skip this step" is for.
+    setQueue(null);
   }, []);
 
   const handleNewFlight = () => {
@@ -768,6 +913,49 @@ export default function App() {
     setInput('');
     refreshBalance(account);
   };
+
+  /* ---- journey (multi-leg queue) ---- */
+
+  const handleContinueQueue = useCallback(() => {
+    if (!queue) return;
+    const advanced = advance(queue);
+    setQueue(advanced);
+    const next = activeLeg(advanced);
+    if (next) {
+      setInput(next.text);
+      void prepareFromText(next.text);
+    }
+  }, [queue, prepareFromText]);
+
+  const handleSkipLeg = useCallback(() => {
+    if (!queue) return;
+    const leg = activeLeg(queue);
+    if (!leg || leg.status !== 'active') return;
+    // An existing note (e.g. "sent, outcome unknown") outranks the fact
+    // that the user then skipped past the step — markLeg keeps it.
+    const next = advance(markLeg(queue, leg.id, 'skipped'));
+    setQueue(next);
+    const upcoming = activeLeg(next);
+    if (upcoming) {
+      setInput(upcoming.text);
+      void prepareFromText(upcoming.text);
+    } else {
+      // Journey over — clear the surface but keep the strip's record.
+      setPlan(null);
+      setPostflight(null);
+      setTxHash(null);
+      setParseSource(null);
+      setParseFailure(null);
+      setErrorMsg(null);
+      setPhase('idle');
+    }
+  }, [queue, prepareFromText]);
+
+  const handleAbandonQueue = useCallback(() => {
+    // Drops only the not-yet-started steps. Whatever is on screen — a
+    // ready plan, a landed receipt — stays exactly as it is.
+    setQueue(null);
+  }, []);
 
   /* ---- keyboard shortcuts ---- */
 
@@ -839,7 +1027,7 @@ export default function App() {
   const handleRevokeFromHangar = (record: ApprovalRecord) => {
     const text = `revoke ${record.spender}'s access to my ${record.token.address}`;
     setInput(text);
-    void prepareFromText(text);
+    startFlight(text);
   };
 
   /* ---- share + report ---- */
@@ -915,8 +1103,8 @@ export default function App() {
           [
             ['fly', t('nav.fly')],
             ['hangar', t('nav.hangar')],
-            ['sign', lang === 'zh' ? '签名' : 'Signatures'],
-            ['observer', lang === 'zh' ? '观察' : 'Observer'],
+            ['sign', t('nav.sign')],
+            ['observer', t('nav.observer')],
             ['log', t('nav.log')],
           ] as [View, string][]
         ).map(([key, label]) => (
@@ -935,8 +1123,10 @@ export default function App() {
         <>
           {sharedNetworkHint && (
             <div className="error-note" role="status">
-              This link was shared for {NETWORKS[sharedNetworkHint].label}, but you are on{' '}
-              {network.label}. We did not switch for you.
+              {t('share.mismatch', {
+                shared: NETWORKS[sharedNetworkHint].label,
+                current: network.label,
+              })}
               <div className="sign-bar">
                 <button
                   className="btn-ghost"
@@ -945,10 +1135,10 @@ export default function App() {
                     setSharedNetworkHint(null);
                   }}
                 >
-                  Switch to {NETWORKS[sharedNetworkHint].label}
+                  {t('share.switch', { network: NETWORKS[sharedNetworkHint].label })}
                 </button>
                 <button className="btn-ghost" onClick={() => setSharedNetworkHint(null)}>
-                  Stay on {network.label}
+                  {t('share.stay', { network: network.label })}
                 </button>
               </div>
             </div>
@@ -960,10 +1150,33 @@ export default function App() {
             disabledReason={disabledReason}
             parseSource={parseSource}
             shareCopied={shareCopied}
+            lang={lang}
             onChange={setInput}
             onSubmit={handlePrepare}
             onShare={handleShare}
           />
+
+          {queue && (
+            <QueueStrip
+              queue={queue}
+              lang={lang}
+              canContinue={
+                phase === 'landed' && queue.legs.some((l) => l.status === 'pending')
+              }
+              canSkip={
+                // Not from 'sent': skipping a broadcast-but-unconfirmed
+                // step would dress a maybe-executed transaction up as
+                // "not run" and clear the do-not-resend warning with it.
+                (phase === 'idle' || phase === 'ready') &&
+                activeLeg(queue)?.status === 'active'
+              }
+              busy={phase === 'planning' || phase === 'signing' || phase === 'pending'}
+              txHref={(hash) => txUrl(network, hash)}
+              onContinue={handleContinueQueue}
+              onSkip={handleSkipLeg}
+              onAbandon={handleAbandonQueue}
+            />
+          )}
 
           {parseFailure && (
             <div className="error-note" role="alert">
@@ -995,6 +1208,7 @@ export default function App() {
               signing={phase === 'signing'}
               copied={copied}
               drift={drift}
+              lang={lang}
               onSign={() => handleSign(false)}
               onSignAnyway={() => handleSign(true)}
               onDismissDrift={() => setDrift(null)}
@@ -1006,25 +1220,22 @@ export default function App() {
           {(phase === 'pending' || phase === 'sent') && txHash && (
             <section className="panel">
               <p className="panel-label">
-                {phase === 'pending' ? 'In flight' : 'Sent — outcome unknown'}
+                {phase === 'pending' ? t('phase.inFlight') : t('phase.sentLabel')}
               </p>
               {phase === 'pending' ? (
-                <p className="busy">waiting for the transaction to land on Monad…</p>
+                <p className="busy">{t('phase.waiting')}</p>
               ) : (
-                <p className="plan-outcome">
-                  We stopped waiting, but the transaction is already on the network.
-                  Do not send it again until you have checked the explorer.
-                </p>
+                <p className="plan-outcome">{t('phase.sentBody')}</p>
               )}
               <p style={{ marginTop: 12, fontSize: 13 }}>
                 <a href={txUrl(network, txHash)} target="_blank" rel="noreferrer">
-                  Track on MonadVision ↗
+                  {t('phase.track')}
                 </a>
               </p>
               {phase === 'sent' && (
                 <div className="sign-bar">
                   <button className="btn-ghost" onClick={handleNewFlight}>
-                    Start a new flight
+                    {t('phase.startNew')}
                   </button>
                 </div>
               )}
@@ -1036,6 +1247,7 @@ export default function App() {
               check={postflight}
               explorerHref={txUrl(network, txHash)}
               copied={copied}
+              lang={lang}
               onNewFlight={handleNewFlight}
               onCopyReport={handleCopyReport}
             />
@@ -1049,6 +1261,7 @@ export default function App() {
           scan={scan}
           scanning={scanning}
           health={health}
+          lang={lang}
           onScan={handleScan}
           onRevoke={handleRevokeFromHangar}
           addressHref={(addr) => addressUrl(network, addr)}
@@ -1093,6 +1306,7 @@ export default function App() {
         <FlightLog
           flights={flights}
           txHref={(hash) => txUrl(network, hash)}
+          lang={lang}
           onClear={() => {
             clearFlights(networkKey);
             setFlights([]);
@@ -1107,6 +1321,7 @@ export default function App() {
         book={book}
         addTokenBusy={addTokenBusy}
         addTokenError={addTokenError}
+        lang={lang}
         onApiKeyChange={handleApiKeyChange}
         onAiProxyUrlChange={handleAiProxyUrlChange}
         onAddToken={handleAddToken}
@@ -1122,9 +1337,9 @@ export default function App() {
           </>
         )}
         {' · '}
-        <span className="mono">Ctrl+K</span> focus ·{' '}
-        <span className="mono">Ctrl+Enter</span> prepare ·{' '}
-        <span className="mono">Ctrl+→</span> next tab
+        <span className="mono">Ctrl+K</span> {t('footer.keyFocus')} ·{' '}
+        <span className="mono">Ctrl+Enter</span> {t('footer.keyPrepare')} ·{' '}
+        <span className="mono">Ctrl+→</span> {t('footer.keyNextTab')}
       </p>
     </>
   );

@@ -766,6 +766,79 @@ a {
   color: var(--danger);
 }
 
+/* ---------- journey queue (multi-leg plans) ---------- */
+
+.queue-summary {
+  font-family: var(--font-data);
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+.queue-legs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.queue-leg {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 8px 4px;
+  border-top: 1px solid var(--line-1);
+}
+.queue-leg:first-of-type {
+  border-top: none;
+}
+.queue-mark {
+  font-family: var(--font-data);
+  font-size: 13px;
+  width: 16px;
+  flex: 0 0 auto;
+  text-align: center;
+  color: var(--text-3);
+}
+.queue-leg.s-active .queue-mark {
+  color: var(--brand);
+}
+.queue-leg.s-signed .queue-mark {
+  color: var(--go);
+}
+.queue-leg.s-failed .queue-mark {
+  color: var(--danger);
+}
+.queue-leg-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.queue-leg-text {
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.queue-leg.s-pending .queue-leg-text,
+.queue-leg.s-skipped .queue-leg-text {
+  color: var(--text-3);
+}
+.queue-leg.s-skipped .queue-leg-text {
+  text-decoration: line-through;
+}
+.queue-leg.s-active .queue-leg-text {
+  font-weight: 700;
+}
+.queue-leg-note {
+  font-size: 12px;
+  color: var(--text-3);
+}
+.queue-leg.s-failed .queue-leg-note {
+  color: var(--danger);
+}
+.queue-leg-hash {
+  font-family: var(--font-data);
+  font-size: 11px;
+}
+
 /* ---------- trace deep-dive ---------- */
 
 .trace-view {

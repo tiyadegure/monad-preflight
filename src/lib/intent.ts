@@ -29,11 +29,12 @@ const RAW_SUGGESTION =
 const RESERVED = new Set([
   'a', 'access', 'address', 'all', 'allow', 'allowance', 'an', 'and',
   'approval', 'approvals', 'approve', 'authorize', 'balance', 'cancel',
-  'coin', 'coins', 'entire', 'everything', 'for', 'from', 'give', 'in',
-  'infinite', 'into', 'it', 'max', 'me', 'move', 'my', 'native', 'of',
-  'on', 'out', 'pay', 'permission', 'please', 'remove', 'revoke', 'send',
-  'spend', 'spending', 'the', 'their', 'them', 'to', 'token', 'tokens',
-  'transfer', 'unlimited', 'up', 'wallet', 'whole', 'your',
+  'coin', 'coins', 'convert', 'entire', 'everything', 'for', 'from',
+  'give', 'half', 'in', 'infinite', 'into', 'it', 'max', 'me', 'move',
+  'my', 'native', 'of', 'on', 'out', 'pay', 'permission', 'please',
+  'remove', 'revoke', 'send', 'spend', 'spending', 'the', 'their',
+  'them', 'then', 'to', 'token', 'tokens', 'transfer', 'unlimited',
+  'unwrap', 'up', 'wallet', 'whole', 'wrap', 'your',
 ]);
 
 /** mon / monad mean the native coin → represented as token: undefined. */
@@ -120,6 +121,99 @@ function addressAfter(masked: string, keyword: RegExp): number | null {
 }
 
 /* ------------------------------------------------------------------ */
+/* Chinese normalization                                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Chinese keyword → English grammar substitutions, applied before parsing
+ * whenever the text contains CJK characters. The grammar below tolerates
+ * any word order (verb, amount and address can appear anywhere), which is
+ * what makes plain substitution sufficient — no separate Chinese grammar
+ * to keep in sync.
+ *
+ * Ordering rules that matter:
+ * - longer phrases before their substrings (转账给 before 转, 解封装 before 封装)
+ * - unwrap words before wrap words (解封装 contains 封装)
+ * - verb+给 compounds before the bare 给 → "to" rule
+ *
+ * Amounts must use digits (0.5, 100) — Chinese numerals are not read.
+ */
+const ZH_RULES: readonly [RegExp, string][] = [
+  // politeness and topic markers — deleted so they can't look like tokens
+  [/请|帮我|帮忙|麻烦|我想要|我要|我想|把|将/g, ' '],
+  // "封装的 MON" is a NOUN — wrapped MON, i.e. WMON — not a wrap command
+  [/封装的\s*mon\b/gi, ' wmon '],
+  // fractions are ambiguous against a moving balance — surfaced as a
+  // failure below, never guessed
+  [/的一半|一半/g, ' half '],
+  // unwrap before wrap: every variant here contains 封装 or 包
+  [/解除封装|取消封装|解封装|解包|解封/g, ' unwrap '],
+  [/封装|包装/g, ' wrap '],
+  // convert forms drive the wrap/unwrap "convert" branch
+  [/兑换成|换成|转换成/g, ' convert to '],
+  [/兑换|转换/g, ' convert '],
+  // send verbs — compounds with 给/到 first, then the bare verbs
+  [/转账给|转给|发给|打给|发送到|发送给/g, ' send to '],
+  [/发送|转账|支付/g, ' send '],
+  [/转/g, ' send '],
+  // approvals
+  [/授权给/g, ' approve '],
+  [/授权额度|的授权|的访问权|的权限/g, ' access '],
+  [/授权|批准/g, ' approve '],
+  [/允许/g, ' allow '],
+  [/撤销|取消/g, ' revoke '],
+  [/花费|使用|动用/g, ' spend '],
+  // quantities
+  [/无限量|无上限|无限/g, ' unlimited '],
+  [/全部的|全部|所有的|所有/g, ' all '],
+  [/我的/g, ' my '],
+  // prepositions last, after every verb+给 compound has been consumed
+  [/到|给/g, ' to '],
+  [/对/g, ' '],
+  // measure words and full-width punctuation
+  [/[个枚颗]/g, ' '],
+  [/，|。|！|？/g, ' '],
+];
+
+const HAS_CJK = /[一-鿿]/;
+
+/**
+ * Digit-with-multiplier amounts — 1万 (10,000), 3千 (3,000), 2.5亿 — are
+ * the standard way Chinese speakers write large numbers. Silently taking
+ * just the digits would prepare a transaction 10³–10⁸ times smaller than
+ * asked, so the multiplier is expanded before parsing.
+ */
+const ZH_MULTIPLIERS: Record<string, number> = {
+  百: 100,
+  千: 1_000,
+  万: 10_000,
+  亿: 100_000_000,
+};
+
+function expandMultipliers(text: string): string {
+  return text.replace(
+    /(\d[\d,]*(?:\.\d+)?)\s*([百千万亿]+)/g,
+    (_match, num: string, units: string) => {
+      let value = Number(num.replace(/,/g, ''));
+      for (const ch of units) value *= ZH_MULTIPLIERS[ch] ?? 1;
+      // 1.23 × 10000 accumulates float dust; round it away.
+      value = Math.round(value * 1e8) / 1e8;
+      return ` ${value} `;
+    },
+  );
+}
+
+/** Rewrite a Chinese instruction into the English grammar; no-op otherwise. */
+function normalizeChinese(text: string): string {
+  if (!HAS_CJK.test(text)) return text;
+  let out = expandMultipliers(text);
+  for (const [pattern, replacement] of ZH_RULES) {
+    out = out.replace(pattern, replacement);
+  }
+  return out.replace(/\s+/g, ' ').trim();
+}
+
+/* ------------------------------------------------------------------ */
 /* Wrap / unwrap — converting between native MON and WMON              */
 /* ------------------------------------------------------------------ */
 
@@ -154,6 +248,17 @@ function parseWrapUnwrap(
     }
   }
   if (action === null) return null;
+
+  // "wrap 1 MON and send it to 0x…" (or 封装…发给…) is TWO actions. The old
+  // behavior — wrap and silently drop the send — discarded half the user's
+  // instruction behind a misleading note. Refuse and ask them to split.
+  if (addressCount > 0 && /\b(send|transfer|pay|move)\b/.test(lower)) {
+    return failure(
+      'That mixes wrapping with a second action, and doing half of it silently would be worse than asking. ' +
+        'Split it into steps — e.g. "wrap 1 MON then send 0.5 WMON to 0x…" ("然后" works too).',
+      ['wrap 1 MON then send 0.5 WMON to 0x<recipient>'],
+    );
+  }
 
   const notes: string[] = [];
   if (addressCount > 0) {
@@ -216,7 +321,7 @@ export function parseIntent(text: string): ParseResult {
   }
   if (trimmed.startsWith('{')) return parseRawJson(trimmed);
 
-  const { masked, addresses } = maskAddresses(trimmed);
+  const { masked, addresses } = maskAddresses(normalizeChinese(trimmed));
   const lower = masked.toLowerCase();
   const notes: string[] = [];
 
@@ -226,10 +331,12 @@ export function parseIntent(text: string): ParseResult {
 
   /* ---- action ---- */
   const isRevoke = /\b(revoke|cancel)\b/.test(lower);
+  // "access"/"permission" language without a revoke is an approval, even
+  // when a transfer verb appears: 给 A 转 100 tUSD 的授权 means "give A the
+  // authorization to transfer 100 tUSD" — an allowance, not a payment.
   const isApprove =
     !isRevoke &&
-    (/\b(approve|allow|authorize)\b/.test(lower) ||
-      (/\bgive\b/.test(lower) && /\baccess\b/.test(lower)));
+    (/\b(approve|allow|authorize)\b/.test(lower) || /\baccess\b/.test(lower));
   const isSend = !isRevoke && !isApprove && /\b(send|transfer|pay|move)\b/.test(lower);
 
   if (!isRevoke && !isApprove && !isSend) {
@@ -239,6 +346,13 @@ export function parseIntent(text: string): ParseResult {
   }
 
   /* ---- amount keywords ---- */
+  // "half" (一半) of a balance that can change between reading and signing
+  // is a guess we refuse to make.
+  if (/\bhalf\b/.test(lower)) {
+    return failure(
+      'Half of a balance is ambiguous — the balance can change before you sign. Say the exact amount instead.',
+    );
+  }
   const wantsUnlimited = /\b(unlimited|infinite|max)\b/.test(lower);
   const wantsAll = /\b(all|everything|entire balance|whole balance)\b/.test(lower);
 
@@ -326,6 +440,22 @@ export function parseIntent(text: string): ParseResult {
         ['send 0.5 MON to 0x<recipient>', 'send all my tUSD to 0x<recipient>'],
       );
     }
+    // "把我所有的 tUSD 转 200 给 A" mentions "all" while asking for 200.
+    // The explicit number wins — sending the entire balance because the
+    // word 所有 appeared somewhere would be the worse surprise.
+    const useAll = wantsAll && amountValue === undefined;
+    if (wantsAll && amountValue !== undefined) {
+      notes.push(
+        `Your message mentioned both "all" and the number ${amountValue} — I used ${amountValue}. Say just "all" if you want to send everything.`,
+      );
+    }
+    if (token === undefined && !tokenIsNative && HAS_CJK.test(masked)) {
+      // Words we could not translate remain — one of them is probably the
+      // token's name. Guessing "native MON" here would move the wrong asset.
+      return failure(
+        'I could not read the token name in that. Name it by its symbol (like tUSD or WMON), or paste the token\'s contract address.',
+      );
+    }
     if (token === undefined && !tokenIsNative && amountValue !== undefined) {
       notes.push('No token named — I assumed you mean native MON.');
     }
@@ -334,7 +464,7 @@ export function parseIntent(text: string): ParseResult {
       intent: {
         action: 'send',
         token,
-        amount: wantsAll ? { all: true } : { value: amountValue },
+        amount: useAll ? { all: true } : { value: amountValue },
         counterparty: addresses[counterpartyIndex],
         notes,
       },

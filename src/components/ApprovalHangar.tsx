@@ -1,6 +1,8 @@
 import type { Address } from '../lib/types';
 import type { ApprovalScan, ApprovalRecord } from '../lib/approvals';
 import type { HealthReport } from '../lib/wallethealth';
+import type { Lang } from '../lib/i18n';
+import { t } from '../lib/i18n';
 import { formatTokenAmount, shortAddress } from '../lib/format';
 
 interface Props {
@@ -8,6 +10,7 @@ interface Props {
   scan: ApprovalScan | null;
   scanning: boolean;
   health: HealthReport | null;
+  lang: Lang;
   onScan: () => void;
   onRevoke: (record: ApprovalRecord) => void;
   addressHref: (addr: string) => string;
@@ -31,23 +34,26 @@ export function ApprovalHangar({
   scan,
   scanning,
   health,
+  lang,
   onScan,
   onRevoke,
   addressHref,
 }: Props) {
   return (
     <section className="panel" aria-label="Approval hangar">
-      <p className="panel-label">Hangar · who can spend your tokens</p>
+      <p className="panel-label">{t(lang, 'hangar.label')}</p>
 
-      {!account && (
-        <p className="hint">Connect your wallet to scan its token approvals.</p>
-      )}
+      {!account && <p className="hint">{t(lang, 'hangar.connectFirst')}</p>}
 
       {account && (
         <>
           <div className="sign-bar" style={{ marginTop: 0, marginBottom: 12 }}>
             <button className="btn-ghost" onClick={onScan} disabled={scanning}>
-              {scanning ? 'Scanning the chain…' : scan ? 'Scan again' : 'Scan my approvals'}
+              {scanning
+                ? t(lang, 'hangar.scanning')
+                : scan
+                  ? t(lang, 'hangar.rescan')
+                  : t(lang, 'hangar.scan')}
             </button>
           </div>
 
@@ -68,13 +74,11 @@ export function ApprovalHangar({
             </div>
           )}
 
-          {scanning && <p className="busy">reading Approval events block by block</p>}
+          {scanning && <p className="busy">{t(lang, 'hangar.busy')}</p>}
 
           {scan && !scanning && scan.records.length === 0 && (
             <p className="hint">
-              {scan.complete
-                ? 'No live approvals found in the scanned range — nobody we saw can currently spend your tokens.'
-                : 'We found no approvals, but parts of this scan failed — so this is not a clean bill of health. Scan again before trusting it.'}
+              {scan.complete ? t(lang, 'hangar.none') : t(lang, 'hangar.incomplete')}
             </p>
           )}
 
@@ -85,18 +89,18 @@ export function ApprovalHangar({
                   <div className="hangar-info">
                     <span className={`hangar-amount${r.unlimited ? ' unlimited' : ''}`}>
                       {r.unlimited
-                        ? `UNLIMITED ${r.token.symbol}`
+                        ? t(lang, 'hangar.unlimited', { symbol: r.token.symbol })
                         : formatTokenAmount(r.allowanceRaw, r.token)}
                     </span>
                     <span className="hangar-spender">
-                      spendable by{' '}
+                      {t(lang, 'hangar.spendableBy')}{' '}
                       <a href={addressHref(r.spender)} target="_blank" rel="noreferrer">
                         {shortAddress(r.spender)}
                       </a>
                     </span>
                   </div>
                   <button className="btn-ghost" onClick={() => onRevoke(r)}>
-                    Revoke
+                    {t(lang, 'hangar.revoke')}
                   </button>
                 </div>
               ))}

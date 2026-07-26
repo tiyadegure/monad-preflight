@@ -1,10 +1,13 @@
 import type { CallFrameSummary, DecodedEvent } from '../lib/types';
 import { NATIVE_MON } from '../lib/types';
+import type { Lang } from '../lib/i18n';
+import { t } from '../lib/i18n';
 import { formatTokenAmount, shortAddress } from '../lib/format';
 
 interface Props {
   frames: CallFrameSummary[];
   events: DecodedEvent[];
+  lang: Lang;
 }
 
 function describeEvent(e: DecodedEvent): string {
@@ -29,11 +32,11 @@ function describeEvent(e: DecodedEvent): string {
  * Everything shown here is data the simulator already produced — no extra
  * network calls.
  */
-export function TraceView({ frames, events }: Props) {
+export function TraceView({ frames, events, lang }: Props) {
   if (frames.length === 0) return null;
   return (
     <details className="trace-view">
-      <summary>Instrument deep-dive · call trace ({frames.length} calls)</summary>
+      <summary>{t(lang, 'trace.summary', { count: frames.length })}</summary>
       <div className="trace-frames">
         {frames.map((f, i) => (
           <div
@@ -52,7 +55,7 @@ export function TraceView({ frames, events }: Props) {
       {events.length > 0 && (
         <>
           <p className="panel-label" style={{ marginTop: 12 }}>
-            Events emitted
+            {t(lang, 'trace.events')}
           </p>
           <div className="trace-frames">
             {events.map((e, i) => (

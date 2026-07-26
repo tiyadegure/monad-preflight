@@ -54,16 +54,25 @@ export const MAX_LEGS = 8;
  * Split a multi-leg instruction into individual legs.
  *
  * Splits on newlines, on the word " then " (any capitalisation), on the
- * Chinese connector "然后", and on semicolons. Commas are deliberately
- * NOT separators — amounts like "1,000" use them. Legs are trimmed,
- * empties are dropped, and at most MAX_LEGS legs are kept.
+ * Chinese connectors "然后" / "紧接着" / "接着", and on semicolons (ASCII ;
+ * and full-width ；). The bare 接着 split is guarded by a lookbehind so
+ * words like 直接着手 ("go ahead and…") don't shatter — CJK has no \b.
+ * Commas are deliberately NOT separators — amounts like "1,000" use them.
+ * Legs are trimmed and empties are dropped.
  */
-export function parseLegs(text: string): string[] {
+const LEG_SEPARATOR = /\r?\n|[;；]|\s+then\s+|\s*(?:然后|紧接着|(?<![直连紧])接着)\s*/gi;
+
+/** Every leg in the instruction, un-capped — lets callers detect overflow. */
+export function splitLegs(text: string): string[] {
   return text
-    .split(/\r?\n|;|\s+then\s+|\s*然后\s*/gi)
+    .split(LEG_SEPARATOR)
     .map((leg) => leg.trim())
-    .filter((leg) => leg.length > 0)
-    .slice(0, MAX_LEGS);
+    .filter((leg) => leg.length > 0);
+}
+
+/** splitLegs, capped at MAX_LEGS. */
+export function parseLegs(text: string): string[] {
+  return splitLegs(text).slice(0, MAX_LEGS);
 }
 
 /* ------------------------------------------------------------------ */

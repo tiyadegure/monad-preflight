@@ -8,6 +8,7 @@ Every feature below is implemented, unit-tested, and reachable from the UI.
 | Feature | What it does |
 |---|---|
 | **Plain-language intents** | `send 0.5 MON to 0xabc…`, `approve … to spend 100 USDC`, `wrap 1 MON`, `unwrap all my WMON`, `revoke …'s access` — a deterministic rule grammar, no AI required |
+| **Chinese intents** ✅ shipped | The same grammar reads Simplified Chinese: `发送 0.5 MON 到 0x…`, `授权 0x… 花费 100 tUSD`, `撤销 0x… 对我的 tUSD 的授权`, `封装 1 MON`, `把 2 WMON 换成 MON` — a deterministic normalization layer, not AI, covered by its own test suite. Amounts use digits, and 万/千/百/亿 multipliers are expanded (`1万` = 10,000). When a sentence is ambiguous (a fraction like 一半, a token named in Chinese, wrapping mixed with a send), PreFlight refuses and asks rather than guessing |
 | **Raw transaction decoding** | Paste the JSON a dapp is about to make you sign; PreFlight prepares and explains it |
 | **Live simulation** | `debug_traceCall` (callTracer + withLog): full call tree, decoded events, revert reasons, gas |
 | **Asset-change preview** | Exact deltas per party per token, decoded from trace events and native value flows |
@@ -38,12 +39,12 @@ Every feature below is implemented, unit-tested, and reachable from the UI.
 |---|---|
 | **Mainnet + testnet** | Chain 143 and 10143, with per-network clients, token registries, explorer links, flight logs, and a "real funds" indicator |
 | **RPC failover** | Ordered multi-endpoint client with timeouts, 429/5xx failover, and a sticky healthy endpoint |
-| **中文 / English** | Bilingual dictionary (58 keys, both languages, parity-tested) with auto-detection and a switcher. Wired through the header and shell today; the flight-plan and hangar panels are still English-only — finishing that is tracked on the roadmap |
+| **中文 / English** | Bilingual dictionary (120 keys per language, parity-tested) with auto-detection and a switcher — wired through the console, flight plan, journey strip, post-flight, hangar, flight log, settings, navigation and footer. Honest boundary: text *generated from chain data* (risk findings, explanations, simulation notes, health-check details, parse-failure messages) plus a handful of error/drift strings are English-only today; translating those is on the roadmap |
 | **Address book** | Save contacts, then say "send 1 MON to alice" — names resolve to addresses before parsing |
 | **Flight log** | Every signed transaction with its verification verdict, per network, stored locally |
 | **Shareable links** | Copy a link that opens the exact same instruction for someone else (URL fragment — never sent to a server); it pre-fills, it never auto-signs |
 | **Markdown reports** | Copy a full flight report for records, support tickets, or team review |
-| **Multi-leg plans** *(module built, not yet wired to the UI)* | `src/lib/queue.ts` splits "approve X then send Y" into legs and is fully tested, but no screen uses it yet. Listed here so the code is not mistaken for a shipped feature |
+| **Multi-leg journeys** ✅ shipped | `wrap 1 MON then send 0.5 WMON to 0x…` (or `然后` / `接着` / newlines / semicolons) becomes an ordered journey strip. Every leg gets its own simulation, its own explanation, and its own wallet signature — a second signature is never hidden behind the first. You can continue, skip a step, or abandon the rest; a leg whose outcome is unknown is shown as exactly that, never as succeeded |
 | **Keyboard-first** | `Ctrl/Cmd+K` focus, `Ctrl/Cmd+Enter` prepare, `Ctrl/Cmd+Shift+S` sign, `Esc` discard, `Ctrl/Cmd+→` next tab |
 | **Installable (PWA)** | Manifest, theme color, standalone display |
 | **Optional AI co-pilot** | Claude parses phrasings the grammar can't and writes a narrative — from verified simulator facts only, clearly labeled, and entirely optional |
