@@ -188,6 +188,8 @@ decimal math), public `faucet()` giving 100 tUSD per call. Paste the address int
 - *Sending* batch transactions (EIP-5792 `wallet_sendCalls`) — the batch *explainer* is shipped; composing and submitting batches is not
 - Historical approval scanning beyond the recent-block window (indexer-backed)
 - Translate the generated prose (risk findings, explanations, simulation notes) into Chinese — the UI chrome is fully bilingual today
+- Built-in canonical token registry for Monad blue-chips (USDe, sUSDe, …) so symbol-impersonation protection works with zero setup — deliberately deferred until the freshly-deployed addresses settle and can be cross-verified on-chain; a wrong canonical entry would be worse than none
+- Aave v3 verb decoding (supply / withdraw / borrow / repay), so the highest-traffic DeFi flows on Monad read in plain language instead of "unreadable raw call"
 
 ## AI usage disclosure
 
