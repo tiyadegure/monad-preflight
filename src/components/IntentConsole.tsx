@@ -12,8 +12,10 @@ interface Props {
   busy: boolean;
   disabledReason?: string;
   parseSource: 'rules' | 'ai' | null;
+  shareCopied: boolean;
   onChange: (v: string) => void;
   onSubmit: () => void;
+  onShare: () => void;
 }
 
 export function IntentConsole({
@@ -21,8 +23,10 @@ export function IntentConsole({
   busy,
   disabledReason,
   parseSource,
+  shareCopied,
   onChange,
   onSubmit,
+  onShare,
 }: Props) {
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -55,6 +59,15 @@ export function IntentConsole({
           disabled={busy || !value.trim() || !!disabledReason}
         >
           {busy ? 'Preparing…' : 'Prepare'}
+        </button>
+        <button
+          className="btn-ghost"
+          type="button"
+          onClick={onShare}
+          disabled={!value.trim()}
+          title="Copy a link that opens this exact instruction for someone else"
+        >
+          {shareCopied ? 'Link copied ✓' : 'Share'}
         </button>
       </form>
 

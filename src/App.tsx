@@ -37,6 +37,14 @@ import { scanApprovals } from './lib/approvals';
 import type { FlightRecord } from './lib/history';
 import { clearFlights, loadFlights, recordFlight } from './lib/history';
 import { flightReportMarkdown } from './lib/report';
+import { fetchBalances } from './lib/balances';
+import { computeExposure } from './lib/portfolio';
+import type { Lang } from './lib/i18n';
+import { detectLang, saveLang, t as translate } from './lib/i18n';
+import { decodeShareLink, encodeShareLink } from './lib/sharelink';
+import { installShortcuts } from './lib/shortcuts';
+import { loadBook, resolveNames } from './lib/addressbook';
+import type { AddressBookEntry } from './lib/addressbook';
 import {
   connect,
   ensureNetwork,
@@ -57,9 +65,12 @@ import { SettingsDrawer } from './components/SettingsDrawer';
 import { ApprovalHangar } from './components/ApprovalHangar';
 import { FlightLog } from './components/FlightLog';
 import { SignatureExplainer } from './components/SignatureExplainer';
+import { ObserverPanel } from './components/ObserverPanel';
 
 type Phase = 'idle' | 'planning' | 'ready' | 'signing' | 'pending' | 'landed';
-type View = 'fly' | 'hangar' | 'log' | 'sign';
+type View = 'fly' | 'hangar' | 'sign' | 'observer' | 'log';
+
+const VIEW_ORDER: View[] = ['fly', 'hangar', 'sign', 'observer', 'log'];
 
 interface Plan {
   tx: PreparedTx;
@@ -92,6 +103,12 @@ function plainError(err: unknown): string {
 export default function App() {
   const provider = useMemo(() => getInjectedProvider(), []);
 
+  const [lang, setLang] = useState<Lang>(() => detectLang());
+  const t = useCallback(
+    (key: string, vars?: Record<string, string | number>) => translate(lang, key, vars),
+    [lang],
+  );
+
   const [networkKey, setNetworkKey] = useState<NetworkKey>(() => {
     const stored = localStorage.getItem(LS_NETWORK);
     return isNetworkKey(stored) ? stored : DEFAULT_NETWORK;
@@ -113,6 +130,7 @@ export default function App() {
   );
   const aiAvailable = Boolean(apiKey || aiProxyUrl);
   const [tokens, setTokens] = useState<TokenInfo[]>(() => loadTokens(networkKey));
+  const [book, setBook] = useState<AddressBookEntry[]>(() => loadBook());
   const [addTokenBusy, setAddTokenBusy] = useState(false);
   const [addTokenError, setAddTokenError] = useState<string | null>(null);
 
@@ -129,6 +147,7 @@ export default function App() {
   const [scanning, setScanning] = useState(false);
   const [flights, setFlights] = useState<FlightRecord[]>(() => loadFlights(networkKey));
   const [copied, setCopied] = useState(false);
+  const [shareCopied, setShareCopied] = useState(false);
 
   const registry = useMemo(() => createRegistry(tokens), [tokens]);
 
@@ -165,6 +184,14 @@ export default function App() {
     refreshBalance(account);
   }, [account, refreshBalance]);
 
+  // A shared link pre-fills the console — never auto-signs, never auto-runs.
+  useEffect(() => {
+    const shared = decodeShareLink(window.location.href);
+    if (!shared) return;
+    setInput(shared.text);
+    if (isNetworkKey(shared.network)) setNetworkKey(shared.network);
+  }, []);
+
   const resetFlight = useCallback(() => {
     setPlan(null);
     setPostflight(null);
@@ -184,6 +211,11 @@ export default function App() {
     setFlights(loadFlights(key));
     setScan(null);
     resetFlight();
+  };
+
+  const handleSelectLang = (next: Lang) => {
+    setLang(next);
+    saveLang(next);
   };
 
   const handleConnect = async () => {
@@ -254,7 +286,7 @@ export default function App() {
   /* ---- the core flow: parse → build → simulate → assess → explain ---- */
 
   const prepareFromText = useCallback(
-    async (text: string) => {
+    async (rawText: string) => {
       if (!account) return;
       setView('fly');
       setPhase('planning');
@@ -267,17 +299,23 @@ export default function App() {
       setCopied(false);
 
       try {
+        // 0. Swap saved names ("alice") for their addresses before parsing.
+        const { text, resolved } = resolveNames(rawText.trim(), book);
+        const bookNotes = resolved.map(
+          (e) => `"${e.name}" is your saved name for ${e.address}.`,
+        );
+
         // 1. Parse: rules first; Claude as fallback when AI is configured.
         let intent: ParsedIntent | null = null;
         let source: 'rules' | 'ai' = 'rules';
-        const ruleResult = parseIntent(text.trim());
+        const ruleResult = parseIntent(text);
         if (ruleResult.ok) {
           intent = ruleResult.intent;
         } else if (aiAvailable) {
           try {
             intent = await aiParseIntent(
               createAiClient(apiKey, aiProxyUrl || undefined),
-              text.trim(),
+              text,
             );
             source = 'ai';
           } catch {
@@ -293,6 +331,7 @@ export default function App() {
           setPhase('idle');
           return;
         }
+        intent.notes = [...bookNotes, ...intent.notes];
         setParseSource(source);
 
         // 2. Build the unsigned transaction.
@@ -338,6 +377,7 @@ export default function App() {
         const risks = assessRisks(tx, sim, ctx);
         const readiness = scorePlan(sim, risks);
         const explanation = composeExplanation(tx, sim, risks, account);
+        if (bookNotes.length > 0) explanation.bullets.push(...bookNotes);
 
         // 8. Optional AI narrative, grounded in simulated facts only.
         if (aiAvailable) {
@@ -368,14 +408,28 @@ export default function App() {
         setPhase('idle');
       }
     },
-    [account, aiAvailable, apiKey, aiProxyUrl, client, network, persistTokens, registry, reader, rpc],
+    [
+      account,
+      aiAvailable,
+      apiKey,
+      aiProxyUrl,
+      book,
+      client,
+      network,
+      persistTokens,
+      registry,
+      reader,
+      rpc,
+    ],
   );
 
-  const handlePrepare = () => prepareFromText(input);
+  const handlePrepare = useCallback(() => {
+    void prepareFromText(input);
+  }, [input, prepareFromText]);
 
   /* ---- signing ---- */
 
-  const handleSign = async () => {
+  const handleSign = useCallback(async () => {
     if (!plan || !provider) return;
     setPhase('signing');
     setErrorMsg(null);
@@ -404,31 +458,46 @@ export default function App() {
     } catch (err) {
       const code = (err as { code?: number })?.code;
       if (code === 4001) {
-        setErrorMsg('You declined in your wallet — nothing was sent.');
-        setPhase('ready');
-      } else if (txHash) {
-        setErrorMsg(
-          `The transaction was sent but confirmation timed out — check the explorer: ${txUrl(network, txHash)}`,
-        );
+        setErrorMsg(t('error.declined'));
         setPhase('ready');
       } else {
         setErrorMsg(plainError(err));
         setPhase('ready');
       }
     }
-  };
+  }, [account, client, network, networkKey, plan, provider, refreshBalance, t]);
 
-  const handleDiscard = () => {
+  const handleDiscard = useCallback(() => {
     setPlan(null);
     setPhase('idle');
     setParseSource(null);
-  };
+  }, []);
 
   const handleNewFlight = () => {
     resetFlight();
     setInput('');
     refreshBalance(account);
   };
+
+  /* ---- keyboard shortcuts ---- */
+
+  useEffect(() => {
+    return installShortcuts(window, {
+      focusInput: () => {
+        setView('fly');
+        const el = document.querySelector<HTMLInputElement>('.console-form input');
+        el?.focus();
+        el?.select();
+      },
+      submit: handlePrepare,
+      discard: handleDiscard,
+      sign: () => {
+        if (phase === 'ready') void handleSign();
+      },
+      nextTab: () =>
+        setView((v) => VIEW_ORDER[(VIEW_ORDER.indexOf(v) + 1) % VIEW_ORDER.length]),
+    });
+  }, [handleDiscard, handlePrepare, handleSign, phase]);
 
   /* ---- hangar ---- */
 
@@ -451,7 +520,21 @@ export default function App() {
     void prepareFromText(text);
   };
 
-  /* ---- report ---- */
+  /* ---- share + report ---- */
+
+  const handleShare = async () => {
+    const link = encodeShareLink(
+      `${window.location.origin}${window.location.pathname}`,
+      { text: input.trim(), network: networkKey },
+    );
+    try {
+      await navigator.clipboard.writeText(link);
+      setShareCopied(true);
+      setTimeout(() => setShareCopied(false), 2000);
+    } catch {
+      setErrorMsg('Could not copy — your browser blocked clipboard access.');
+    }
+  };
 
   const handleCopyReport = async () => {
     if (!plan) return;
@@ -476,10 +559,12 @@ export default function App() {
   };
 
   const disabledReason = !provider
-    ? 'Install a browser wallet (e.g. MetaMask) to prepare and sign transactions.'
+    ? t('error.noWalletHint')
     : !account
-      ? 'Connect your wallet first — PreFlight simulates from your own account.'
+      ? t('error.connectHint')
       : undefined;
+
+  const netLabel = network.label.toLowerCase();
 
   return (
     <>
@@ -494,24 +579,23 @@ export default function App() {
           balanceWei={balanceWei}
           connecting={connecting}
           network={network}
+          lang={lang}
           onConnect={handleConnect}
           onSwitchWalletNetwork={handleSwitchWalletNetwork}
           onSelectNetwork={handleSelectNetwork}
+          onSelectLang={handleSelectLang}
         />
       </header>
-      <p className="tagline">
-        Say what you want to do. PreFlight prepares the transaction, simulates it on
-        Monad {network.label.toLowerCase()}, and explains it in plain language — then
-        you decide whether to sign.
-      </p>
+      <p className="tagline">{t('app.tagline', { network: netLabel })}</p>
 
       <nav className="view-tabs" aria-label="Workspace">
         {(
           [
-            ['fly', 'Fly'],
-            ['hangar', 'Hangar'],
-            ['sign', 'Signatures'],
-            ['log', 'Log'],
+            ['fly', t('nav.fly')],
+            ['hangar', t('nav.hangar')],
+            ['sign', lang === 'zh' ? '签名' : 'Signatures'],
+            ['observer', lang === 'zh' ? '观察' : 'Observer'],
+            ['log', t('nav.log')],
           ] as [View, string][]
         ).map(([key, label]) => (
           <button
@@ -532,8 +616,10 @@ export default function App() {
             busy={phase === 'planning'}
             disabledReason={disabledReason}
             parseSource={parseSource}
+            shareCopied={shareCopied}
             onChange={setInput}
             onSubmit={handlePrepare}
+            onShare={handleShare}
           />
 
           {parseFailure && (
@@ -608,6 +694,33 @@ export default function App() {
 
       {view === 'sign' && <SignatureExplainer expectedChainIds={[network.chainId]} />}
 
+      {view === 'observer' && (
+        <ObserverPanel
+          reader={{
+            getBalance: (a) => client.getBalance({ address: a }),
+            getTransactionCount: (a) => client.getTransactionCount({ address: a }),
+            getCode: (a) => client.getCode({ address: a }).then((c) => c ?? null),
+          }}
+          scanApprovalsFor={(addr) => scanApprovals(rpc, addr)}
+          fetchBalancesFor={async (addr) => {
+            const result = await fetchBalances(client, addr, tokens);
+            return result.tokens.map((b) => ({ token: b.token, raw: b.raw }));
+          }}
+          computeExposure={(balances, approvalScan) =>
+            computeExposure({
+              balances,
+              approvals: approvalScan.records.map((r) => ({
+                token: r.token,
+                spender: r.spender,
+                allowanceRaw: r.allowanceRaw,
+                unlimited: r.unlimited,
+              })),
+            })
+          }
+          addressHref={(addr) => addressUrl(network, addr)}
+        />
+      )}
+
       {view === 'log' && (
         <FlightLog
           flights={flights}
@@ -623,23 +736,27 @@ export default function App() {
         apiKey={apiKey}
         aiProxyUrl={aiProxyUrl}
         tokens={tokens}
+        book={book}
         addTokenBusy={addTokenBusy}
         addTokenError={addTokenError}
         onApiKeyChange={handleApiKeyChange}
         onAiProxyUrlChange={handleAiProxyUrlChange}
         onAddToken={handleAddToken}
+        onBookChange={setBook}
       />
 
       <p className="footer-note">
-        Simulation runs live against Monad {network.label.toLowerCase()}
-        (debug_traceCall) · keys never leave your wallet · a simulation is a
-        best-effort preview, not a guarantee
+        {t('footer.simNote', { network: netLabel })}
         {network.faucetUrl && (
           <>
-            {' '}
-            · need test MON? <a href={network.faucetUrl}>faucet</a>
+            {' · '}
+            <a href={network.faucetUrl}>{t('footer.faucet')}</a>
           </>
         )}
+        {' · '}
+        <span className="mono">Ctrl+K</span> focus ·{' '}
+        <span className="mono">Ctrl+Enter</span> prepare ·{' '}
+        <span className="mono">Ctrl+→</span> next tab
       </p>
     </>
   );

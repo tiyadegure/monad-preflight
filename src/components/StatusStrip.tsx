@@ -2,6 +2,8 @@ import type { Address } from '../lib/types';
 import { NATIVE_MON } from '../lib/types';
 import type { NetworkConfig, NetworkKey } from '../lib/networks';
 import { NETWORKS } from '../lib/networks';
+import type { Lang } from '../lib/i18n';
+import { t } from '../lib/i18n';
 import { formatTokenAmount, shortAddress } from '../lib/format';
 
 interface Props {
@@ -11,9 +13,11 @@ interface Props {
   balanceWei: bigint | null;
   connecting: boolean;
   network: NetworkConfig;
+  lang: Lang;
   onConnect: () => void;
   onSwitchWalletNetwork: () => void;
   onSelectNetwork: (key: NetworkKey) => void;
+  onSelectLang: (lang: Lang) => void;
 }
 
 export function StatusStrip({
@@ -23,9 +27,11 @@ export function StatusStrip({
   balanceWei,
   connecting,
   network,
+  lang,
   onConnect,
   onSwitchWalletNetwork,
   onSelectNetwork,
+  onSelectLang,
 }: Props) {
   const walletOnNetwork = walletChainId === network.chainId;
 
@@ -44,10 +50,23 @@ export function StatusStrip({
         ))}
       </div>
 
+      <div className="net-switch" role="group" aria-label="Language">
+        {(['en', 'zh'] as Lang[]).map((key) => (
+          <button
+            key={key}
+            className={key === lang ? 'active' : ''}
+            aria-pressed={key === lang}
+            onClick={() => onSelectLang(key)}
+          >
+            {key === 'en' ? 'EN' : '中文'}
+          </button>
+        ))}
+      </div>
+
       {network.isMainnet && (
         <span className="readout warn">
           <span className="dot" />
-          real funds
+          {t(lang, 'status.realFunds')}
         </span>
       )}
 
@@ -62,7 +81,11 @@ export function StatusStrip({
           onClick={onConnect}
           disabled={!hasWallet || connecting}
         >
-          {connecting ? 'Connecting…' : hasWallet ? 'Connect wallet' : 'No wallet found'}
+          {connecting
+            ? t(lang, 'status.connecting')
+            : hasWallet
+              ? t(lang, 'status.connect')
+              : t(lang, 'status.noWallet')}
         </button>
       )}
 
@@ -74,7 +97,7 @@ export function StatusStrip({
           </span>
         ) : (
           <button className="btn-ghost" onClick={onSwitchWalletNetwork}>
-            Switch wallet to {network.label}
+            {t(lang, 'status.switchTo', { network: network.label })}
           </button>
         ))}
 

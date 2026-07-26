@@ -1,34 +1,55 @@
 import { useState } from 'react';
 import type { TokenInfo } from '../lib/types';
+import type { AddressBookEntry } from '../lib/addressbook';
+import { removeEntry, saveEntry } from '../lib/addressbook';
 import { shortAddress } from '../lib/format';
 
 interface Props {
   apiKey: string;
   aiProxyUrl: string;
   tokens: TokenInfo[];
+  book: AddressBookEntry[];
   addTokenBusy: boolean;
   addTokenError: string | null;
   onApiKeyChange: (key: string) => void;
   onAiProxyUrlChange: (url: string) => void;
   onAddToken: (address: string) => void;
+  onBookChange: (book: AddressBookEntry[]) => void;
 }
 
 /**
- * Inline settings (no modal): optional Claude API key for the AI co-pilot,
- * and the custom token registry. Both persist in localStorage only.
+ * Inline settings (no modal): the optional AI connection, the token
+ * registry, and the address book. Everything here lives in this browser
+ * only — nothing is uploaded anywhere.
  */
 export function SettingsDrawer({
   apiKey,
   aiProxyUrl,
   tokens,
+  book,
   addTokenBusy,
   addTokenError,
   onApiKeyChange,
   onAiProxyUrlChange,
   onAddToken,
+  onBookChange,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [tokenInput, setTokenInput] = useState('');
+  const [bookName, setBookName] = useState('');
+  const [bookAddress, setBookAddress] = useState('');
+  const [bookError, setBookError] = useState<string | null>(null);
+
+  const addContact = () => {
+    setBookError(null);
+    try {
+      onBookChange(saveEntry({ name: bookName, address: bookAddress }));
+      setBookName('');
+      setBookAddress('');
+    } catch (err) {
+      setBookError(err instanceof Error ? err.message : String(err));
+    }
+  };
 
   return (
     <section className="panel" aria-label="Settings">
@@ -38,10 +59,11 @@ export function SettingsDrawer({
         aria-expanded={open}
         style={{ width: '100%', textAlign: 'left' }}
       >
-        {open ? '▾' : '▸'} Settings — AI co-pilot & tokens{' '}
+        {open ? '▾' : '▸'} Settings — AI, tokens & contacts{' '}
         <span className="parse-source">
           {apiKey || aiProxyUrl ? ' · AI on' : ' · AI off (rule-based mode)'}
           {tokens.length ? ` · ${tokens.length} token${tokens.length > 1 ? 's' : ''}` : ''}
+          {book.length ? ` · ${book.length} contact${book.length > 1 ? 's' : ''}` : ''}
         </span>
       </button>
 
@@ -104,6 +126,62 @@ export function SettingsDrawer({
                 .join(' · ')}
             </p>
           )}
+
+          <label>
+            Save a contact — then just say "send 1 MON to alice"
+            <span style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <input
+                value={bookName}
+                onChange={(e) => setBookName(e.target.value)}
+                placeholder="alice"
+                style={{ flex: '0 1 140px', minWidth: 0 }}
+                aria-label="Contact name"
+              />
+              <input
+                value={bookAddress}
+                onChange={(e) => setBookAddress(e.target.value)}
+                placeholder="0x…"
+                style={{ flex: '1 1 200px', minWidth: 0 }}
+                aria-label="Contact address"
+              />
+              <button
+                className="btn-ghost"
+                type="button"
+                disabled={!bookName.trim() || !bookAddress.trim()}
+                onClick={addContact}
+              >
+                Save
+              </button>
+            </span>
+          </label>
+
+          {bookError && <p className="error-note">{bookError}</p>}
+
+          {book.length > 0 && (
+            <div>
+              {book.map((entry) => (
+                <div className="hangar-row" key={entry.name}>
+                  <div className="hangar-info">
+                    <span className="hangar-amount">{entry.name}</span>
+                    <span className="hangar-spender mono">
+                      {shortAddress(entry.address)}
+                    </span>
+                  </div>
+                  <button
+                    className="btn-ghost"
+                    onClick={() => onBookChange(removeEntry(entry.name))}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <p className="hint">
+            Everything on this panel is stored in your browser only. PreFlight has no
+            server and no account.
+          </p>
         </div>
       )}
     </section>
