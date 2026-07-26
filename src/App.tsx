@@ -37,6 +37,9 @@ import { compareSimulations } from './lib/drift';
 import { assessCounterparty } from './lib/reputation';
 import { readFees } from './lib/gasoracle';
 import type { FeeReading } from './lib/gasoracle';
+import { assessDelegationRisks, detectDelegation } from './lib/delegation';
+import { assessWalletHealth } from './lib/wallethealth';
+import type { HealthReport } from './lib/wallethealth';
 import { fingerprintAddress } from './lib/fingerprint';
 import type { Fingerprint } from './lib/fingerprint';
 import { formatTokenAmount } from './lib/format';
@@ -205,6 +208,7 @@ export default function App() {
 
   const [scan, setScan] = useState<ApprovalScan | null>(null);
   const [scanning, setScanning] = useState(false);
+  const [health, setHealth] = useState<HealthReport | null>(null);
   const [flights, setFlights] = useState<FlightRecord[]>(() => loadFlights(networkKey));
   const [copied, setCopied] = useState(false);
   const [shareCopied, setShareCopied] = useState(false);
@@ -318,6 +322,7 @@ export default function App() {
     setTokens(loadTokens(key));
     setFlights(loadFlights(key));
     setScan(null);
+    setHealth(null);
     resetFlight();
   };
 
@@ -463,7 +468,7 @@ export default function App() {
 
         // 4. Gather on-chain facts for the risk rules.
         const probe = tx.counterparty ?? tx.to;
-        const [senderBalanceWei, cpCode, cpTxCount, cpBalance, tokenCode] =
+        const [senderBalanceWei, cpCode, cpTxCount, cpBalance, tokenCode, selfCode] =
           await Promise.all([
             client.getBalance({ address: tx.from }),
             client.getCode({ address: probe }).catch(() => null),
@@ -472,6 +477,10 @@ export default function App() {
             tx.token?.address
               ? client.getCode({ address: tx.token.address }).catch(() => null)
               : Promise.resolve(null),
+            // The user's own account code: a non-empty result on a wallet
+            // means it has been delegated (EIP-7702) and is running someone
+            // else's code. That is the loudest thing we can tell them.
+            client.getCode({ address: tx.from }).catch(() => null),
           ]);
         const ctx: RiskContext = {
           senderBalanceWei,
@@ -504,6 +513,17 @@ export default function App() {
             if (!risks.some((r) => r.title === f.title)) reputationFindings.push(f);
           }
           risks.push(...reputationFindings);
+        }
+
+        // EIP-7702: is the user's own wallet delegated, or the recipient?
+        const delegationFindings = assessDelegationRisks({
+          self: detectDelegation(selfCode),
+          counterparty: detectDelegation(cpCode),
+          counterpartyIsRecipient:
+            tx.kind === 'native-transfer' || tx.kind === 'erc20-transfer',
+        });
+        for (const f of delegationFindings) {
+          if (!risks.some((r) => r.id === f.id)) risks.push(f);
         }
 
         // 6. Score and explanation.
@@ -776,7 +796,39 @@ export default function App() {
     setScanning(true);
     setErrorMsg(null);
     try {
-      setScan(await scanApprovals(rpc, account));
+      // Read the approvals and the wallet's own state together, so the
+      // health verdict reflects one moment rather than a stitched-together
+      // picture from two different times.
+      const [result, ownCode, ownBalance] = await Promise.all([
+        scanApprovals(rpc, account),
+        client.getCode({ address: account }).catch(() => undefined),
+        client.getBalance({ address: account }).catch(() => null),
+      ]);
+      setScan(result);
+
+      const unlimited = result.records.filter((r) => r.unlimited).length;
+      setHealth(
+        assessWalletHealth({
+          // undefined from a failed read means "we could not check", which
+          // must stay distinct from "not delegated".
+          delegated: ownCode === undefined ? null : detectDelegation(ownCode),
+          unlimitedApprovals: result.complete ? unlimited : null,
+          totalApprovals: result.complete ? result.records.length : null,
+          scanComplete: result.complete,
+          nativeBalanceWei: ownBalance,
+          exposedTokenCount: result.complete
+            ? computeExposure({
+                balances: [],
+                approvals: result.records.map((r) => ({
+                  token: r.token,
+                  spender: r.spender,
+                  allowanceRaw: r.allowanceRaw,
+                  unlimited: r.unlimited,
+                })),
+              }).totalTokensAtRisk
+            : null,
+        }),
+      );
     } catch (err) {
       setErrorMsg(plainError(err));
     } finally {
@@ -996,13 +1048,19 @@ export default function App() {
           account={account}
           scan={scan}
           scanning={scanning}
+          health={health}
           onScan={handleScan}
           onRevoke={handleRevokeFromHangar}
           addressHref={(addr) => addressUrl(network, addr)}
         />
       )}
 
-      {view === 'sign' && <SignatureExplainer expectedChainIds={[network.chainId]} />}
+      {view === 'sign' && (
+        <SignatureExplainer
+          expectedChainIds={[network.chainId]}
+          selfAddress={account}
+        />
+      )}
 
       {view === 'observer' && (
         <ObserverPanel

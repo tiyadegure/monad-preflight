@@ -890,3 +890,54 @@ a {
   white-space: nowrap;
   border: 0;
 }
+
+/* ---------- wallet health check ---------- */
+
+.health {
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-2);
+  padding: 12px;
+  margin-bottom: 16px;
+}
+.health-fail {
+  background: var(--danger-dim);
+}
+.health-unknown,
+.health-warn {
+  background: var(--caution-dim);
+}
+.health-pass {
+  background: var(--go-dim);
+}
+.health-headline {
+  margin: 0 0 10px;
+  font-weight: 700;
+  font-size: 14px;
+}
+.health-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 6px 0;
+}
+.health-mark {
+  font-family: var(--font-data);
+  font-weight: 700;
+  width: 1.2em;
+  flex: none;
+  text-align: center;
+}
+.health-row.s-pass .health-mark {
+  color: var(--go);
+}
+.health-row.s-warn .health-mark,
+.health-row.s-unknown .health-mark {
+  color: var(--caution);
+}
+.health-row.s-fail .health-mark {
+  color: var(--danger);
+}
+.health-label {
+  font-size: 13px;
+  font-weight: 700;
+}

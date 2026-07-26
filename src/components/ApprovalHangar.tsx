@@ -1,15 +1,24 @@
 import type { Address } from '../lib/types';
 import type { ApprovalScan, ApprovalRecord } from '../lib/approvals';
+import type { HealthReport } from '../lib/wallethealth';
 import { formatTokenAmount, shortAddress } from '../lib/format';
 
 interface Props {
   account: Address | null;
   scan: ApprovalScan | null;
   scanning: boolean;
+  health: HealthReport | null;
   onScan: () => void;
   onRevoke: (record: ApprovalRecord) => void;
   addressHref: (addr: string) => string;
 }
+
+const STATUS_MARK: Record<string, string> = {
+  pass: '✓',
+  warn: '!',
+  fail: '✗',
+  unknown: '–',
+};
 
 /**
  * The Hangar: every live token approval your wallet has granted —
@@ -21,6 +30,7 @@ export function ApprovalHangar({
   account,
   scan,
   scanning,
+  health,
   onScan,
   onRevoke,
   addressHref,
@@ -40,6 +50,23 @@ export function ApprovalHangar({
               {scanning ? 'Scanning the chain…' : scan ? 'Scan again' : 'Scan my approvals'}
             </button>
           </div>
+
+          {health && (
+            <div className={`health health-${health.worst}`}>
+              <p className="health-headline">{health.headline}</p>
+              {health.checks.map((c) => (
+                <div className={`health-row s-${c.status}`} key={c.id}>
+                  <span className="health-mark" aria-hidden="true">
+                    {STATUS_MARK[c.status]}
+                  </span>
+                  <div>
+                    <span className="health-label">{c.label}</span>
+                    <p className="a-detail">{c.detail}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
 
           {scanning && <p className="busy">reading Approval events block by block</p>}
 
