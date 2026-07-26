@@ -26,13 +26,21 @@ almost nothing shows *what will actually happen*.
 
 | | |
 |---|---|
-| 🗣 **Plain-language intents** | `send 0.5 MON to 0xabc…`, `approve … to spend 100 USDC`, `wrap 1 MON`, `revoke …'s access` — or paste a raw transaction JSON copied from any dapp popup and PreFlight explains what it was about to do |
+| 🗣 **Plain-language intents** | `send 0.5 MON to alice`, `approve … to spend 100 USDC`, `wrap 1 MON`, `unwrap all my WMON`, `revoke …'s access` — or paste a raw transaction JSON copied from any dapp popup and PreFlight explains what it was about to do |
 | 🔬 **Real simulation** | Every plan runs through `debug_traceCall` on a live RPC: full call tree, decoded events, revert reasons, gas — not a guess, a dry run against current chain state |
+| 🎯 **Readiness gauge** | One score, one verdict (Cleared / Hold / Grounded), one sentence of advice — because nobody reads fifteen warnings |
 | 💡 **Asset-change preview** | "You send 0.5 MON · 0x12…cd receives 0.5 MON · fee ≈ 0.0002 MON" — decoded from the trace's Transfer/Approval events and native value flows |
-| 🚨 **Risk annunciators** | 15 deterministic rules: unlimited approvals, the approval-to-a-personal-wallet drainer pattern, never-used (typo?) recipients, guaranteed reverts, zero-address burns, and more — severity-ranked, jargon-free |
+| 🚨 **Risk annunciators** | 16 deterministic rules plus on-chain counterparty reputation: unlimited approvals, the approval-to-a-personal-wallet drainer pattern, never-used (typo?) recipients, guaranteed reverts, zero-address burns, and more — severity-ranked, jargon-free |
+| ⏱ **Drift detection** | Re-simulates immediately before you sign and tells you if the chain moved while you were reading — the honest completion of "simulate before you sign" |
+| 🏚 **Approval Hangar** | Scans on-chain Approval events, live-verifies each allowance, and shows everyone who can currently spend your tokens — one click to revoke |
+| ✒️ **Signature inspector** | Explains EIP-712 permits (ERC-2612, Permit2) before you sign. Signing costs no gas and shows nothing useful in a wallet — which is exactly why drainers prefer it |
+| 👁 **Observer mode** | Inspect any address read-only, no wallet needed — check a friend's wallet for drainer approvals, or audit before you interact |
 | ✍️ **Your keys, your wallet** | PreFlight never touches keys; your own wallet signs. It only *prepares* and *explains* |
 | ✅ **Post-flight verification** | After mining, the receipt is compared against the pre-sign simulation: outcome, every token movement, fee — matched or flagged |
+| 🌏 **中文 / English** | Full bilingual UI, auto-detected and switchable |
 | 🤖 **Optional AI co-pilot** | Claude parses phrasings the rule grammar can't and writes a short narrative — grounded strictly in the simulator's verified facts, clearly labeled. The app is 100% functional without it |
+
+Full feature reference: **[docs/FEATURES.md](docs/FEATURES.md)**.
 
 ## What's live vs. simulated (honesty table)
 
@@ -68,10 +76,11 @@ networks for you — Monad Testnet (10143) by default, Mainnet (143) via the
 switcher. Testnet gas: [faucet](https://faucet.monad.xyz).
 
 ```bash
-npm test             # unit tests (offline, deterministic)
-npm run test:e2e     # LIVE pipeline tests against the real Monad testnet RPC —
-                     # discovers a real token from recent blocks and verifies
-                     # simulation, decoding, and revert detection against it
+npm test             # 500 unit tests (offline, deterministic)
+npm run test:e2e     # 13 LIVE tests against real Monad testnet AND mainnet RPCs —
+                     # discovers a real token from recent blocks and verifies the
+                     # whole pipeline, plus RPC failover, fee reading, contract
+                     # fingerprinting, Multicall3 balances, and approval scanning
 npm run build        # strict typecheck + production build
 ```
 
@@ -122,11 +131,10 @@ decimal math), public `faucet()` giving 100 tUSD per call. Paste the address int
 ## Roadmap
 
 - **Swap support** via an on-chain DEX router, same prepare→simulate→explain flow
-- **中文界面** (zh-CN localization)
-- **"Explain this signature"** for EIP-712 typed-data requests, not just transactions
-- **Wallet-extension companion** — intercept any dapp's request and pre-flight it
+- **Wallet-extension companion** — intercept any dapp's request and pre-flight it in place
 - **Risk API** — the simulation + risk engine as a service for wallets and dapps
-- Batch transactions / account-abstraction (EIP-5792 `wallet_sendCalls`) support
+- Batch transactions / account abstraction (EIP-5792 `wallet_sendCalls`)
+- Historical approval scanning beyond the recent-block window (indexer-backed)
 
 ## AI usage disclosure
 
