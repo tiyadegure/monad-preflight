@@ -6,6 +6,8 @@ import { describeProfile, normalizeObserverInput, profileAddress } from '../lib/
 import type { ApprovalScan } from '../lib/approvals';
 import type { ExposureReport } from '../lib/portfolio';
 import { formatTokenAmount, shortAddress } from '../lib/format';
+import { t } from '../lib/i18n';
+import type { Lang } from '../lib/i18n';
 
 interface Props {
   reader: ObserverReader;
@@ -14,8 +16,10 @@ interface Props {
   computeExposure: (
     balances: { token: TokenInfo; raw: bigint }[],
     scan: ApprovalScan,
+    lang: Lang,
   ) => ExposureReport;
   addressHref: (addr: string) => string;
+  lang: Lang;
 }
 
 /**
@@ -30,6 +34,7 @@ export function ObserverPanel({
   fetchBalancesFor,
   computeExposure,
   addressHref,
+  lang,
 }: Props) {
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -38,7 +43,7 @@ export function ObserverPanel({
   const [exposure, setExposure] = useState<ExposureReport | null>(null);
 
   const inspect = async () => {
-    const normalized = normalizeObserverInput(input);
+    const normalized = normalizeObserverInput(input, lang);
     if ('error' in normalized) {
       setError(normalized.error);
       setProfile(null);
@@ -50,13 +55,13 @@ export function ObserverPanel({
     setProfile(null);
     setExposure(null);
     try {
-      const p = await profileAddress(reader, normalized.address);
+      const p = await profileAddress(reader, normalized.address, lang);
       setProfile(p);
       const [balances, scan] = await Promise.all([
         fetchBalancesFor(normalized.address),
         scanApprovalsFor(normalized.address),
       ]);
-      setExposure(computeExposure(balances, scan));
+      setExposure(computeExposure(balances, scan, lang));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -65,11 +70,10 @@ export function ObserverPanel({
   };
 
   return (
-    <section className="panel" aria-label="Observer mode">
-      <p className="panel-label">Observer · inspect any address, read only</p>
+    <section className="panel" aria-label={t(lang, 'observer.ariaLabel')}>
+      <p className="panel-label">{t(lang, 'observer.label')}</p>
       <p className="hint" style={{ marginBottom: 10 }}>
-        No wallet needed. Check what an address holds and who can spend its tokens —
-        yours, a friend's, or one you are about to send money to.
+        {t(lang, 'observer.hint')}
       </p>
 
       <div className="console-form">
@@ -79,12 +83,12 @@ export function ObserverPanel({
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !busy) void inspect();
           }}
-          placeholder="0x… or a MonadVision address link"
-          aria-label="Address to inspect"
+          placeholder={t(lang, 'observer.placeholder')}
+          aria-label={t(lang, 'observer.inputAria')}
           spellCheck={false}
         />
         <button className="btn-primary" onClick={inspect} disabled={busy || !input.trim()}>
-          {busy ? 'Reading…' : 'Inspect'}
+          {busy ? t(lang, 'observer.reading') : t(lang, 'observer.inspect')}
         </button>
       </div>
 
@@ -94,7 +98,11 @@ export function ObserverPanel({
         </div>
       )}
 
-      {busy && <p className="busy" style={{ marginTop: 14 }}>reading the chain</p>}
+      {busy && (
+        <p className="busy" style={{ marginTop: 14 }}>
+          {t(lang, 'observer.busy')}
+        </p>
+      )}
 
       {profile && (
         <div style={{ marginTop: 16 }}>
@@ -103,7 +111,7 @@ export function ObserverPanel({
               {shortAddress(profile.address)} ↗
             </a>
           </h3>
-          {describeProfile(profile, (wei) => formatTokenAmount(wei, NATIVE_MON)).map(
+          {describeProfile(profile, (wei) => formatTokenAmount(wei, NATIVE_MON), lang).map(
             (line, i) => (
               <div className="check-row" key={i} style={{ animationDelay: `${i * 60}ms` }}>
                 <span className="k">{line}</span>
@@ -115,23 +123,26 @@ export function ObserverPanel({
 
       {exposure && (
         <div style={{ marginTop: 16 }}>
-          <p className="panel-label">Exposure · what others can spend</p>
+          <p className="panel-label">{t(lang, 'observer.exposureLabel')}</p>
           <p className="plan-outcome">{exposure.headline}</p>
 
           {exposure.lines.map((l) => (
             <div className="hangar-row" key={l.token.address ?? l.token.symbol}>
               <div className="hangar-info">
                 <span className={`hangar-amount${l.fullyExposed ? ' unlimited' : ''}`}>
-                  {formatTokenAmount(l.exposedRaw, l.token)} of{' '}
-                  {formatTokenAmount(l.balanceRaw, l.token)} reachable
+                  {t(lang, 'observer.of', {
+                    exposed: formatTokenAmount(l.exposedRaw, l.token),
+                    balance: formatTokenAmount(l.balanceRaw, l.token),
+                  })}
                 </span>
                 <span className="hangar-spender">
                   {l.unlimitedSpenders.length > 0 &&
-                    `${l.unlimitedSpenders.length} unlimited · `}
-                  {l.limitedSpenders.length > 0 && `${l.limitedSpenders.length} limited`}
+                    `${t(lang, 'observer.unlimitedN', { n: String(l.unlimitedSpenders.length) })} · `}
+                  {l.limitedSpenders.length > 0 &&
+                    t(lang, 'observer.limitedN', { n: String(l.limitedSpenders.length) })}
                   {l.unlimitedSpenders.length === 0 &&
                     l.limitedSpenders.length === 0 &&
-                    'no open permissions'}
+                    t(lang, 'observer.noPermissions')}
                 </span>
               </div>
             </div>

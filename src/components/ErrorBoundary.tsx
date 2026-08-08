@@ -1,8 +1,11 @@
 import { Component } from 'react'
 import type { ErrorInfo, ReactNode } from 'react'
+import { t } from '../lib/i18n'
+import type { Lang } from '../lib/i18n'
 
 interface ErrorBoundaryProps {
   children: ReactNode
+  lang: Lang
 }
 
 interface ErrorBoundaryState {
@@ -27,20 +30,18 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
   render() {
     if (this.state.hasError) {
+      const { lang } = this.props
       return (
         <div className="panel" role="alert">
-          <p className="panel-label">Something went wrong</p>
-          <p className="error-note">
-            The app hit an unexpected problem and stopped to stay safe. Nothing was signed or
-            sent. Reloading the page usually fixes it.
-          </p>
+          <p className="panel-label">{t(lang, 'eb.title')}</p>
+          <p className="error-note">{t(lang, 'eb.body')}</p>
           <button
             type="button"
             className="btn-ghost"
             style={{ marginTop: 12 }}
             onClick={() => location.reload()}
           >
-            Reload
+            {t(lang, 'eb.reload')}
           </button>
         </div>
       )

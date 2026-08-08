@@ -40,7 +40,7 @@ export function ApprovalHangar({
   addressHref,
 }: Props) {
   return (
-    <section className="panel" aria-label="Approval hangar">
+    <section className="panel" aria-label={t(lang, 'hangar.label')}>
       <p className="panel-label">{t(lang, 'hangar.label')}</p>
 
       {!account && <p className="hint">{t(lang, 'hangar.connectFirst')}</p>}

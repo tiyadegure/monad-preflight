@@ -13,6 +13,8 @@
 
 import type { Address, TokenInfo } from './types';
 import { UNLIMITED_THRESHOLD } from './format';
+import { t } from './i18n';
+import type { Lang } from './i18n';
 
 /* ------------------------------------------------------------------ */
 /* Contracts                                                           */
@@ -84,7 +86,7 @@ function minBig(a: bigint, b: bigint): bigint {
 /* Report                                                              */
 /* ------------------------------------------------------------------ */
 
-export function computeExposure(input: ExposureInput): ExposureReport {
+export function computeExposure(input: ExposureInput, lang: Lang = 'en'): ExposureReport {
   // Balances keyed by lowercased token address. Native MON (address
   // null) can never be granted to a spender, so it never joins a line.
   const balanceByToken = new Map<string, { token: TokenInfo; raw: bigint }>();
@@ -179,8 +181,8 @@ export function computeExposure(input: ExposureInput): ExposureReport {
     lines,
     totalTokensAtRisk,
     unlimitedCount,
-    headline: buildHeadline(totalTokensAtRisk, unlimitedCount),
-    advice: buildAdvice(lines),
+    headline: buildHeadline(totalTokensAtRisk, unlimitedCount, lang),
+    advice: buildAdvice(lines, lang),
   };
 }
 
@@ -188,12 +190,18 @@ export function computeExposure(input: ExposureInput): ExposureReport {
 /* Words                                                               */
 /* ------------------------------------------------------------------ */
 
-function buildHeadline(totalTokensAtRisk: number, unlimitedCount: number): string {
-  const exposureSentence = `${totalTokensAtRisk} of your tokens can be spent by someone else right now.`;
+function buildHeadline(
+  totalTokensAtRisk: number,
+  unlimitedCount: number,
+  lang: Lang,
+): string {
+  const exposureSentence = t(lang, 'port.headlineSome', {
+    n: totalTokensAtRisk,
+  });
   const unlimitedSentence =
     unlimitedCount === 1
-      ? '1 unlimited permission is open on this wallet.'
-      : `${unlimitedCount} unlimited permissions are open on this wallet.`;
+      ? t(lang, 'port.headlineUnlimitedOne')
+      : t(lang, 'port.headlineUnlimitedMany', { n: unlimitedCount });
 
   if (unlimitedCount > 0) {
     return totalTokensAtRisk > 0
@@ -201,10 +209,10 @@ function buildHeadline(totalTokensAtRisk: number, unlimitedCount: number): strin
       : unlimitedSentence;
   }
   if (totalTokensAtRisk > 0) return exposureSentence;
-  return 'Nothing in this wallet can be spent by anyone else.';
+  return t(lang, 'port.headlineNone');
 }
 
-function buildAdvice(lines: ExposureLine[]): string[] {
+function buildAdvice(lines: ExposureLine[], lang: Lang): string[] {
   if (lines.length === 0) return [];
 
   const advice: string[] = [];
@@ -224,39 +232,35 @@ function buildAdvice(lines: ExposureLine[]): string[] {
     const names = unlimitedFunded.map((l) => l.token.symbol).join(', ');
     advice.push(
       unlimitedFunded.length === 1
-        ? `Start with ${names}: cancel (revoke) the unlimited access to it — you hold this token right now, so it can be taken at any moment.`
-        : `Start with ${names}: cancel (revoke) the unlimited access to them — you hold these tokens right now, so they can be taken at any moment.`,
+        ? t(lang, 'port.advice.unlimitedFundedOne', { names })
+        : t(lang, 'port.advice.unlimitedFundedMany', { names }),
     );
   }
 
   if (unlimitedEmpty.length > 0) {
     const names = unlimitedEmpty.map((l) => l.token.symbol).join(', ');
-    advice.push(
-      `You do not hold any ${names} right now, but the unlimited access is still open. Cancel (revoke) it before you add funds — otherwise anything you deposit can be taken straight away.`,
-    );
+    advice.push(t(lang, 'port.advice.unlimitedEmpty', { names }));
   }
 
   if (unlimitedUnknown.length > 0) {
     const names = unlimitedUnknown.map((l) => l.token.symbol).join(', ');
     advice.push(
-      `Unlimited access is open on ${names}, and we could not read your balance of ` +
-        `${unlimitedUnknown.length === 1 ? 'it' : 'them'} — so we cannot tell you how much is at risk. ` +
-        'Treat this as unresolved and revoke it unless you know why it is there.',
+      t(lang, 'port.advice.unlimitedUnknown', {
+        names,
+        itThem:
+          unlimitedUnknown.length === 1
+            ? t(lang, 'port.advice.itThemOne')
+            : t(lang, 'port.advice.itThemMany'),
+      }),
     );
   }
 
   if (unlimitedFunded.length === 0 && unlimitedEmpty.length === 0) {
-    advice.push(
-      'None of this access is unlimited, but it is still safest to cancel (revoke) any permission you no longer use.',
-    );
+    advice.push(t(lang, 'port.advice.capped'));
   }
 
-  advice.push(
-    'Cancelling a permission is a normal transaction, so each one costs a small network fee.',
-  );
-  advice.push(
-    'Permissions never expire on their own — they stay open until you cancel them, even if the app that asked for them is long gone.',
-  );
+  advice.push(t(lang, 'port.advice.fee'));
+  advice.push(t(lang, 'port.advice.noExpiry'));
 
   return advice;
 }

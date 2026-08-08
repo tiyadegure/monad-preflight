@@ -4,31 +4,26 @@ import type { NetworkConfig, NetworkKey } from '../lib/networks';
 import { NETWORKS } from '../lib/networks';
 import type { Lang } from '../lib/i18n';
 import { t } from '../lib/i18n';
-import { formatTokenAmount, shortAddress } from '../lib/format';
+import { formatTokenAmount } from '../lib/format';
+import { ConnectButton } from '@rainbow-me/rainbowkit';
 
 interface Props {
-  hasWallet: boolean;
   account: Address | null;
   walletChainId: number | null;
   balanceWei: bigint | null;
-  connecting: boolean;
   network: NetworkConfig;
   lang: Lang;
-  onConnect: () => void;
   onSwitchWalletNetwork: () => void;
   onSelectNetwork: (key: NetworkKey) => void;
   onSelectLang: (lang: Lang) => void;
 }
 
 export function StatusStrip({
-  hasWallet,
   account,
   walletChainId,
   balanceWei,
-  connecting,
   network,
   lang,
-  onConnect,
   onSwitchWalletNetwork,
   onSelectNetwork,
   onSelectLang,
@@ -37,7 +32,7 @@ export function StatusStrip({
 
   return (
     <div className="status-strip" role="status">
-      <div className="net-switch" role="group" aria-label="Network">
+      <div className="net-switch" role="group" aria-label={t(lang, 'status.networkAria')}>
         {(Object.keys(NETWORKS) as NetworkKey[]).map((key) => (
           <button
             key={key}
@@ -50,7 +45,7 @@ export function StatusStrip({
         ))}
       </div>
 
-      <div className="net-switch" role="group" aria-label="Language">
+      <div className="net-switch" role="group" aria-label={t(lang, 'status.languageAria')}>
         {(['en', 'zh'] as Lang[]).map((key) => (
           <button
             key={key}
@@ -70,24 +65,12 @@ export function StatusStrip({
         </span>
       )}
 
-      {account ? (
-        <span className="readout on" title={account}>
-          <span className="dot" />
-          {shortAddress(account)}
-        </span>
-      ) : (
-        <button
-          className="btn-ghost"
-          onClick={onConnect}
-          disabled={!hasWallet || connecting}
-        >
-          {connecting
-            ? t(lang, 'status.connecting')
-            : hasWallet
-              ? t(lang, 'status.connect')
-              : t(lang, 'status.noWallet')}
-        </button>
-      )}
+      {/* Connect / account / chain switch live in RainbowKit's button now. */}
+      <ConnectButton
+        showBalance={false}
+        chainStatus="icon"
+        accountStatus="full"
+      />
 
       {account &&
         (walletOnNetwork ? (

@@ -36,7 +36,7 @@ export function PostFlight({
   onCopyReport,
 }: Props) {
   return (
-    <section className="panel" aria-label="Post-flight verification">
+    <section className="panel" aria-label={t(lang, 'postflight.ariaLabel')}>
       <p className="panel-label">{t(lang, 'postflight.label')}</p>
 
       <div className={`pf-verdict ${check.matched ? 'ok' : 'bad'}`}>
@@ -54,7 +54,7 @@ export function PostFlight({
             <th scope="col">{t(lang, 'postflight.colCheck')}</th>
             <th scope="col">{t(lang, 'postflight.colSimulated')}</th>
             <th scope="col">{t(lang, 'postflight.colActual')}</th>
-            <th scope="col" aria-label="Match" />
+            <th scope="col" aria-label={t(lang, 'postflight.matchAria')} />
           </tr>
         </thead>
         <tbody>

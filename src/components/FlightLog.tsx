@@ -23,7 +23,7 @@ function verdict(f: FlightRecord): { cls: string; key: string } {
  */
 export function FlightLog({ flights, txHref, lang, onClear }: Props) {
   return (
-    <section className="panel" aria-label="Flight log">
+    <section className="panel" aria-label={t(lang, 'log.label')}>
       <p className="panel-label">{t(lang, 'log.label')}</p>
 
       {flights.length === 0 && <p className="hint">{t(lang, 'log.empty')}</p>}

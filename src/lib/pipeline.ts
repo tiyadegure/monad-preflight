@@ -38,6 +38,7 @@ import { readFees } from './gasoracle';
 import type { FeeReading } from './gasoracle';
 import { fingerprintAddress } from './fingerprint';
 import type { Fingerprint } from './fingerprint';
+import type { Lang } from './i18n';
 
 /* ------------------------------------------------------------------ */
 /* Chain access                                                        */
@@ -116,6 +117,8 @@ export interface AssessOptions {
   knownAddresses?: readonly string[];
   /** Tokens the user knows — used to catch symbol impersonation. */
   knownTokens?: readonly TokenInfo[];
+  /** Language for user-facing output (default 'en'). */
+  lang?: Lang;
 }
 
 /** Wall-clock milliseconds per stage — the performance story, measured. */
@@ -158,10 +161,11 @@ export async function assessTransaction(
   const { rpc, reader } = deps;
   const includeFees = opts.includeFees !== false;
   const includeFingerprint = opts.includeFingerprint !== false;
+  const lang: Lang = opts.lang ?? 'en';
   const t0 = now();
 
   // 1. Simulate against live chain state.
-  const sim = await simulateTx(tx, rpc);
+  const sim = await simulateTx(tx, rpc, lang);
   const tAfterSim = now();
 
   // 2. Gather on-chain facts. Sender balance is required; the rest turn
@@ -198,7 +202,7 @@ export async function assessTransaction(
   };
 
   // 3. Risk rules, then on-chain counterparty reputation.
-  const risks = assessRisks(tx, sim, ctx);
+  const risks = assessRisks(tx, sim, ctx, lang);
   const reputationFindings: RiskFinding[] = [];
   if (ctx.counterpartyIsContract !== undefined) {
     const rep = assessCounterparty(
@@ -209,6 +213,7 @@ export async function assessTransaction(
         codeSize: cpCode && cpCode !== '0x' ? (cpCode.length - 2) / 2 : 0,
       },
       { isApprovalTarget: tx.kind === 'erc20-approve' },
+      lang,
     );
     // Only add findings the rule engine did not already raise.
     for (const f of rep.findings) {
@@ -218,12 +223,15 @@ export async function assessTransaction(
   }
 
   // 4. EIP-7702: is the user's own wallet delegated, or the recipient?
-  const delegationFindings = assessDelegationRisks({
-    self: detectDelegation(selfCode),
-    counterparty: detectDelegation(cpCode),
-    counterpartyIsRecipient:
-      tx.kind === 'native-transfer' || tx.kind === 'erc20-transfer',
-  });
+  const delegationFindings = assessDelegationRisks(
+    {
+      self: detectDelegation(selfCode),
+      counterparty: detectDelegation(cpCode),
+      counterpartyIsRecipient:
+        tx.kind === 'native-transfer' || tx.kind === 'erc20-transfer',
+    },
+    lang,
+  );
   for (const f of delegationFindings) {
     if (!risks.some((r) => r.id === f.id)) risks.push(f);
   }
@@ -236,18 +244,18 @@ export async function assessTransaction(
     sim,
     knownAddresses: opts.knownAddresses ?? [],
     knownTokens: opts.knownTokens ?? [],
-  });
+  }, lang);
   for (const f of spoofFindings) {
     if (!risks.some((r) => r.id === f.id)) risks.push(f);
   }
 
   // 5. Score and explanation.
-  const readiness = scorePlan(sim, risks);
-  const explanation = composeExplanation(tx, sim, risks, tx.from);
+  const readiness = scorePlan(sim, risks, lang);
+  const explanation = composeExplanation(tx, sim, risks, tx.from, lang);
 
   // 6. Optional extras — a failure here must never block the assessment.
   const [fees, counterparty] = await Promise.all([
-    includeFees ? readFees(rpc, sim.gasUsed).catch(() => null) : Promise.resolve(null),
+    includeFees ? readFees(rpc, sim.gasUsed, lang).catch(() => null) : Promise.resolve(null),
     includeFingerprint && tx.counterparty
       ? fingerprintAddress(
           {
@@ -256,6 +264,7 @@ export async function assessTransaction(
             call: (a, data) => reader.call(a, data).catch(() => '0x' as Hex),
           },
           tx.counterparty,
+          lang,
         ).catch(() => null)
       : Promise.resolve(null),
   ]);

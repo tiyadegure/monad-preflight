@@ -15,6 +15,8 @@ import type {
   SimulationResult,
 } from './types';
 import { UNLIMITED_THRESHOLD, isSameAddress } from './format';
+import { t } from './i18n';
+import type { Lang } from './i18n';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
@@ -29,6 +31,7 @@ export function assessRisks(
   tx: PreparedTx,
   sim: SimulationResult,
   ctx: RiskContext,
+  lang: Lang = 'en',
 ): RiskFinding[] {
   const findings: RiskFinding[] = [];
   const add = (id: string, severity: RiskSeverity, title: string, detail: string) =>
@@ -38,14 +41,13 @@ export function assessRisks(
 
   if (!sim.ok) {
     const reason = sim.revertReason
-      ? ` The network gave this reason: "${sim.revertReason}".`
+      ? t(lang, 'risk.revertReason', { reason: sim.revertReason })
       : '';
     add(
       'simulation-reverted',
       'danger',
-      'This transaction would fail',
-      `Our test run shows the network would reject this transaction.${reason}` +
-        ' No funds would move, but you could still lose the gas fee paid to attempt it.',
+      t(lang, 'risk.revertedTitle'),
+      t(lang, 'risk.revertedDetail', { reason }),
     );
   }
 
@@ -53,9 +55,8 @@ export function assessRisks(
     add(
       'insufficient-balance',
       'danger',
-      'Not enough MON in your wallet',
-      'The amount you are sending plus the network fee adds up to more MON than you have.' +
-        ' The transaction cannot go through as it is.',
+      t(lang, 'risk.noBalanceTitle'),
+      t(lang, 'risk.noBalanceDetail'),
     );
   }
 
@@ -68,9 +69,8 @@ export function assessRisks(
     add(
       'unlimited-approval',
       'danger',
-      'Gives unlimited access to your tokens',
-      'This lets the spender move ALL of that token out of your wallet, at any time,' +
-        ' until you cancel (revoke) the permission. Only grant this to apps you fully trust.',
+      t(lang, 'risk.unlimitedTitle'),
+      t(lang, 'risk.unlimitedDetail'),
     );
   }
 
@@ -78,9 +78,8 @@ export function assessRisks(
     add(
       'approval-to-eoa',
       'danger',
-      'Approving a personal wallet, not an app',
-      'You are giving token access to a personal wallet, not an app.' +
-        ' This is the classic pattern of wallet-drainer scams — real apps ask you to approve a program, not a person.',
+      t(lang, 'risk.approveEoaTitle'),
+      t(lang, 'risk.approveEoaDetail'),
     );
   }
 
@@ -88,9 +87,8 @@ export function assessRisks(
     add(
       'token-not-contract',
       'danger',
-      'Token address is not a real token',
-      'The address used as the token has no program behind it, so it cannot be a working token.' +
-        ' This transaction will not do what you expect — double-check the token address.',
+      t(lang, 'risk.tokenNotContractTitle'),
+      t(lang, 'risk.tokenNotContractDetail'),
     );
   }
 
@@ -98,9 +96,8 @@ export function assessRisks(
     add(
       'zero-address',
       'danger',
-      'Destination is the zero address',
-      'The other side of this transaction is the all-zeros address (0x000…000).' +
-        ' Funds sent there are destroyed forever — nobody can ever get them back.',
+      t(lang, 'risk.zeroAddressTitle'),
+      t(lang, 'risk.zeroAddressDetail'),
     );
   }
 
@@ -110,9 +107,8 @@ export function assessRisks(
     add(
       'send-to-contract',
       'caution',
-      'The recipient is a program',
-      'The address you are sending to is a program, not a person.' +
-        ' Make sure it is meant to receive funds directly, or they could get stuck.',
+      t(lang, 'risk.toContractTitle'),
+      t(lang, 'risk.toContractDetail'),
     );
   }
 
@@ -124,9 +120,8 @@ export function assessRisks(
     add(
       'fresh-recipient',
       'caution',
-      'Recipient address has never been used',
-      'This address has no history and holds nothing — it may be brand new, or it may be a typo.' +
-        ' Double-check every character, because transactions cannot be undone.',
+      t(lang, 'risk.freshRecipientTitle'),
+      t(lang, 'risk.freshRecipientDetail'),
     );
   }
 
@@ -138,9 +133,8 @@ export function assessRisks(
     add(
       'sending-entire-balance',
       'caution',
-      'Sending almost everything in your wallet',
-      'This sends 95% or more of the MON you have.' +
-        ' You may not keep enough to pay fees on your next transactions.',
+      t(lang, 'risk.entireBalanceTitle'),
+      t(lang, 'risk.entireBalanceDetail'),
     );
   }
 
@@ -150,9 +144,8 @@ export function assessRisks(
     add(
       'unknown-effects',
       'caution',
-      'We cannot fully read this transaction',
-      'The simulation could not fully read what this transaction does.' +
-        ' Only continue if you already trust whoever gave it to you.',
+      t(lang, 'risk.unknownEffectsTitle'),
+      t(lang, 'risk.unknownEffectsDetail'),
     );
   }
 
@@ -160,24 +153,22 @@ export function assessRisks(
     add(
       'simulation-degraded',
       'caution',
-      'Only a basic check was possible',
-      'We could not run a full test of this transaction, so this preview may miss details.' +
-        ' Treat it as a rough guide, not a guarantee.',
+      t(lang, 'risk.degradedTitle'),
+      t(lang, 'risk.degradedDetail'),
     );
   }
 
   /* ---------------- info ---------------- */
 
   // Wrapping and unwrapping are the same coins in a different coat, so
-  // the transfer warnings above (send-to-contract, fresh-recipient) are
-  // deliberately gated to transfer kinds and stay quiet here.
+  // the transfer warnings above (skip-send-to-contract, fresh-recipient)
+  // deliberately stay quiet here.
   if (tx.kind === 'wrap' || tx.kind === 'unwrap') {
     add(
       'wrap-info',
       'info',
-      'Fully reversible',
-      'This converts between MON and WMON at exactly 1 to 1 — 1 MON always equals 1 WMON.' +
-        ' You can undo it at any time; nothing is lost except the small network fee.',
+      t(lang, 'risk.wrapTitle'),
+      t(lang, 'risk.wrapDetail'),
     );
   }
 
@@ -185,9 +176,8 @@ export function assessRisks(
     add(
       'self-transfer',
       'info',
-      'The other address is your own',
-      'The other side of this transaction is your own wallet.' +
-        ' That is usually harmless, but you still pay a network fee — double-check it is what you meant.',
+      t(lang, 'risk.selfTitle'),
+      t(lang, 'risk.selfDetail'),
     );
   }
 
@@ -195,9 +185,8 @@ export function assessRisks(
     add(
       'zero-amount',
       'info',
-      'This transaction moves nothing',
-      'The amount is zero, so no tokens will actually move.' +
-        ' You would still pay the network fee.',
+      t(lang, 'risk.zeroAmountTitle'),
+      t(lang, 'risk.zeroAmountDetail'),
     );
   }
 
@@ -205,13 +194,12 @@ export function assessRisks(
     add(
       'large-gas',
       'info',
-      'Uses an unusually large amount of gas',
-      'This is an unusually complex transaction for this kind of action.' +
-        ' Complex transactions cost more in fees and are harder to predict.',
+      t(lang, 'risk.largeGasTitle'),
+      t(lang, 'risk.largeGasDetail'),
     );
   }
 
-  // Rules above are declared danger-first, then caution, then info,
+  // Rules below all declared danger-first, then caution, then info,
   // so `findings` is already ordered by severity band and stable within it.
   return findings;
 }

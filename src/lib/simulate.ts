@@ -22,6 +22,8 @@ import type {
 } from './types';
 import { NATIVE_MON } from './types';
 import { UNLIMITED_THRESHOLD, shortAddress } from './format';
+import { t } from './i18n';
+import type { Lang } from './i18n';
 
 /* ------------------------------------------------------------------ */
 /* RPC client                                                          */
@@ -100,7 +102,11 @@ async function callEndpoint(url: string, body: string, timeoutMs: number): Promi
  *   never triggers failover.
  * - It remembers which endpoint answered last and starts there next time.
  */
-export function makeHttpRpc(urls: string | string[], opts?: { timeoutMs?: number }): RpcCallFn {
+export function makeHttpRpc(
+  urls: string | string[],
+  opts?: { timeoutMs?: number; lang?: Lang },
+): RpcCallFn {
+  const lang = opts?.lang ?? 'en';
   const endpoints = typeof urls === 'string' ? [urls] : [...urls];
   if (endpoints.length === 0) {
     throw new Error('makeHttpRpc needs at least one RPC url.');
@@ -122,14 +128,17 @@ export function makeHttpRpc(urls: string | string[], opts?: { timeoutMs?: number
       const reply = await callEndpoint(url, body, timeoutMs);
       if (reply.kind === 'unavailable') continue;
       if (reply.kind === 'rejected') {
-        throw new Error(`The RPC server answered with HTTP ${reply.status} for ${method}.`);
+        throw new Error(t(lang, 'sim.httpStatus', { status: String(reply.status), method }));
       }
 
       preferredIndex = index;
       if (reply.payload.error) {
         throw new Error(
           reply.payload.error.message ??
-            `RPC error ${reply.payload.error.code ?? 'unknown'} for ${method}`,
+            t(lang, 'sim.rpcError', {
+              code: String(reply.payload.error.code ?? 'unknown'),
+              method,
+            }),
         );
       }
       return reply.payload.result;
@@ -138,8 +147,8 @@ export function makeHttpRpc(urls: string | string[], opts?: { timeoutMs?: number
     const tried = endpoints.length;
     throw new Error(
       tried === 1
-        ? 'We could not reach the network. We tried 1 endpoint and it did not answer. Please check your connection and try again.'
-        : `We could not reach the network. We tried ${tried} endpoints and none of them answered. Please check your connection and try again.`,
+        ? t(lang, 'sim.networkDownOne')
+        : t(lang, 'sim.networkDownMany', { n: String(tried) }),
     );
   };
 }
@@ -163,10 +172,6 @@ const DECIMALS_CALLDATA = '0x313ce567'; // decimals()
 const SYMBOL_CALLDATA = '0x95d89b41'; // symbol()
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
-
-const WALLET_FEE_NOTE = 'Your wallet will show the exact network fee before you sign.';
-const FALLBACK_NOTE = 'Deep simulation unavailable on this RPC — ran a basic check instead.';
-const NO_REASON = 'The contract rejected the transaction without giving a reason.';
 
 /* ------------------------------------------------------------------ */
 /* Raw trace shapes (what debug_traceCall's callTracer returns)        */
@@ -340,25 +345,27 @@ function decodeLog(log: RawLog): DecodedEvent {
 /* Revert reason decoding                                              */
 /* ------------------------------------------------------------------ */
 
-function panicName(code: bigint): string {
+function panicName(code: bigint, lang: Lang): string {
   switch (code) {
     case 0x01n:
-      return 'failed assertion';
+      return t(lang, 'sim.panic.assertion');
     case 0x11n:
-      return 'arithmetic overflow';
+      return t(lang, 'sim.panic.overflow');
     case 0x12n:
-      return 'division by zero';
+      return t(lang, 'sim.panic.division');
     case 0x32n:
-      return 'index out of range';
+      return t(lang, 'sim.panic.index');
     default:
-      return `internal error code 0x${code.toString(16).padStart(2, '0')}`;
+      return t(lang, 'sim.panic.code', {
+        code: code.toString(16).padStart(2, '0'),
+      });
   }
 }
 
-function decodeRevertReason(frame: RawFrame): string {
+function decodeRevertReason(frame: RawFrame, lang: Lang): string {
   if (frame.revertReason) return frame.revertReason;
   const output = frame.output ?? '0x';
-  if (output === '0x' || output.length < 10) return NO_REASON;
+  if (output === '0x' || output.length < 10) return t(lang, 'sim.noReason');
   const selector = output.slice(0, 10).toLowerCase();
 
   if (selector === ERROR_STRING_SELECTOR) {
@@ -369,7 +376,7 @@ function decodeRevertReason(frame: RawFrame): string {
       );
       return reason;
     } catch {
-      return 'The contract rejected the transaction without giving a readable reason.';
+      return t(lang, 'sim.noReadableReason');
     }
   }
   if (selector === PANIC_SELECTOR) {
@@ -378,19 +385,19 @@ function decodeRevertReason(frame: RawFrame): string {
         [{ type: 'uint256' }] as const,
         `0x${output.slice(10)}` as Hex,
       );
-      return `The contract stopped the transaction: ${panicName(code)}.`;
+      return t(lang, 'sim.contractStopped', { reason: panicName(code, lang) });
     } catch {
-      return 'The contract stopped the transaction with an internal error.';
+      return t(lang, 'sim.contractStoppedInternal');
     }
   }
   // Anything else is a contract-specific custom error we cannot name.
-  return `The contract rejected it with custom error ${selector}.`;
+  return t(lang, 'sim.customError', { selector });
 }
 
 /** Turn an eth_call error message into a readable reason (fallback path). */
-function reasonFromErrorMessage(message: string): string {
+function reasonFromErrorMessage(message: string, lang: Lang): string {
   const stripped = message.replace(/^execution reverted:?\s*/i, '').trim();
-  return stripped.length > 0 ? stripped : NO_REASON;
+  return stripped.length > 0 ? stripped : t(lang, 'sim.noReason');
 }
 
 /* ------------------------------------------------------------------ */
@@ -421,6 +428,7 @@ async function fetchTokenInfo(
   rpc: RpcCallFn,
   cache: Map<string, TokenInfo>,
   notes: string[],
+  lang: Lang,
 ): Promise<TokenInfo> {
   const key = address.toLowerCase();
   const cached = cache.get(key);
@@ -451,7 +459,7 @@ async function fetchTokenInfo(
 
   if (degraded) {
     notes.push(
-      `The token at ${shortAddress(address)} did not report its details, so we show a shortened address and assume 18 decimals.`,
+      t(lang, 'appr.tokenDegraded', { address: shortAddress(address) }),
     );
   }
 
@@ -464,13 +472,13 @@ async function fetchTokenInfo(
 /* Gas                                                                 */
 /* ------------------------------------------------------------------ */
 
-async function fetchGasPriceWei(rpc: RpcCallFn, notes: string[]): Promise<bigint> {
+async function fetchGasPriceWei(rpc: RpcCallFn, notes: string[], lang: Lang): Promise<bigint> {
   try {
     const raw = await rpc('eth_gasPrice', []);
     if (typeof raw !== 'string') throw new Error('unexpected gas price response');
     return hexToBigInt(raw);
   } catch {
-    notes.push('We could not read the current network gas price, so the fee estimate may show as zero.');
+    notes.push(t(lang, 'sim.feeUnavailable'));
     return 0n;
   }
 }
@@ -484,8 +492,9 @@ async function simulateWithoutTrace(
   callObj: Record<string, string>,
   rpc: RpcCallFn,
   notes: string[],
+  lang: Lang,
 ): Promise<SimulationResult> {
-  notes.push(FALLBACK_NOTE);
+  notes.push(t(lang, 'sim.fallbackNote'));
 
   let ok = true;
   let revertReason: string | undefined;
@@ -493,7 +502,7 @@ async function simulateWithoutTrace(
     await rpc('eth_call', [callObj, 'latest']);
   } catch (err) {
     ok = false;
-    revertReason = reasonFromErrorMessage(err instanceof Error ? err.message : String(err));
+    revertReason = reasonFromErrorMessage(err instanceof Error ? err.message : String(err), lang);
   }
 
   // Without a trace we only know about the tx's own native value.
@@ -509,11 +518,11 @@ async function simulateWithoutTrace(
     if (typeof estimated !== 'string') throw new Error('unexpected estimate response');
     gasUsed = hexToBigInt(estimated);
   } catch {
-    if (ok) notes.push('We could not estimate how much gas this transaction needs.');
+    if (ok) notes.push(t(lang, 'sim.gasNeeds'));
   }
 
-  const gasPrice = await fetchGasPriceWei(rpc, notes);
-  notes.push(WALLET_FEE_NOTE);
+  const gasPrice = await fetchGasPriceWei(rpc, notes, lang);
+  notes.push(t(lang, 'sim.walletFeeNote'));
 
   return {
     ok,
@@ -532,7 +541,11 @@ async function simulateWithoutTrace(
 /* Main entry point                                                    */
 /* ------------------------------------------------------------------ */
 
-export async function simulateTx(tx: PreparedTx, rpc: RpcCallFn): Promise<SimulationResult> {
+export async function simulateTx(
+  tx: PreparedTx,
+  rpc: RpcCallFn,
+  lang: Lang = 'en',
+): Promise<SimulationResult> {
   const notes: string[] = [];
 
   const callObj: Record<string, string> = { from: tx.from, to: tx.to, data: tx.data };
@@ -551,7 +564,7 @@ export async function simulateTx(tx: PreparedTx, rpc: RpcCallFn): Promise<Simula
   }
   if (root === null) {
     // Some gateways disable debug_traceCall entirely.
-    return simulateWithoutTrace(tx, callObj, rpc, notes);
+    return simulateWithoutTrace(tx, callObj, rpc, notes, lang);
   }
 
   const frames: CallFrameSummary[] = [];
@@ -562,11 +575,11 @@ export async function simulateTx(tx: PreparedTx, rpc: RpcCallFn): Promise<Simula
   const top = frames[0];
   if (top === undefined) {
     // Should be impossible; treat it like a disabled tracer.
-    return simulateWithoutTrace(tx, callObj, rpc, notes);
+    return simulateWithoutTrace(tx, callObj, rpc, notes, lang);
   }
 
   const ok = !root.error;
-  const revertReason = ok ? undefined : decodeRevertReason(root);
+  const revertReason = ok ? undefined : decodeRevertReason(root, lang);
   const events = rawLogs.map(decodeLog);
 
   // ---- asset deltas: merge per (party, token), then drop zero nets ----
@@ -612,7 +625,7 @@ export async function simulateTx(tx: PreparedTx, rpc: RpcCallFn): Promise<Simula
   for (const { party, tokenAddress, delta } of deltas.values()) {
     if (delta === 0n) continue;
     const token =
-      tokenAddress === null ? NATIVE_MON : await fetchTokenInfo(tokenAddress, rpc, tokenCache, notes);
+      tokenAddress === null ? NATIVE_MON : await fetchTokenInfo(tokenAddress, rpc, tokenCache, notes, lang);
     assetChanges.push({ party, token, deltaRaw: delta });
   }
 
@@ -624,7 +637,7 @@ export async function simulateTx(tx: PreparedTx, rpc: RpcCallFn): Promise<Simula
     approvalChanges.push({
       owner: event.args.owner as Address,
       spender: event.args.spender as Address,
-      token: await fetchTokenInfo(event.address, rpc, tokenCache, notes),
+      token: await fetchTokenInfo(event.address, rpc, tokenCache, notes, lang),
       amountRaw,
       unlimited: amountRaw >= UNLIMITED_THRESHOLD,
     });
@@ -640,12 +653,12 @@ export async function simulateTx(tx: PreparedTx, rpc: RpcCallFn): Promise<Simula
   } catch {
     // Expected when the tx reverts; only worth a note on a passing tx.
     if (ok) {
-      notes.push('The network would not give a full gas estimate, so the gas shown may be slightly low.');
+      notes.push(t(lang, 'sim.gasEstimateFail'));
     }
   }
 
-  const gasPrice = await fetchGasPriceWei(rpc, notes);
-  notes.push(WALLET_FEE_NOTE);
+  const gasPrice = await fetchGasPriceWei(rpc, notes, lang);
+  notes.push(t(lang, 'sim.walletFeeNote'));
 
   return {
     ok,

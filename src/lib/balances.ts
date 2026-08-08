@@ -9,6 +9,8 @@
 
 import type { PublicClient } from 'viem';
 import type { Address, TokenInfo } from './types';
+import { t } from './i18n';
+import type { Lang } from './i18n';
 
 export interface TokenBalance {
   token: TokenInfo;
@@ -49,6 +51,7 @@ export async function fetchBalances(
   client: PublicClient,
   owner: Address,
   tokens: TokenInfo[],
+  lang: Lang = 'en',
 ): Promise<BalancesResult> {
   const notes: string[] = [];
 
@@ -89,8 +92,8 @@ export async function fetchBalances(
       const names = failedSymbols.join(', ');
       notes.push(
         failedSymbols.length === 1
-          ? `We could not check your ${names} balance right now, so it is not shown.`
-          : `We could not check your balances for these tokens right now, so they are not shown: ${names}.`,
+          ? t(lang, 'bal.failedOne', { name: names })
+          : t(lang, 'bal.failedMany', { names }),
       );
     }
   }

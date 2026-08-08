@@ -16,6 +16,8 @@
 
 import type { PreparedTx, RiskFinding, SimulationResult, TokenInfo } from './types';
 import { shortAddress } from './format';
+import { t } from './i18n';
+import type { Lang } from './i18n';
 
 /* ------------------------------------------------------------------ */
 /* Lookalike addresses (the address-poisoning payoff)                  */
@@ -59,7 +61,7 @@ export interface SpoofingInput {
   knownTokens: readonly TokenInfo[];
 }
 
-export function assessSpoofing(input: SpoofingInput): RiskFinding[] {
+export function assessSpoofing(input: SpoofingInput, lang: Lang = 'en'): RiskFinding[] {
   const findings: RiskFinding[] = [];
   const { tx, sim, knownAddresses, knownTokens } = input;
 
@@ -70,13 +72,11 @@ export function assessSpoofing(input: SpoofingInput): RiskFinding[] {
       findings.push({
         id: 'address-poisoning-lookalike',
         severity: 'danger',
-        title: 'This address imitates one you trust',
-        detail:
-          `${shortAddress(target)} shows the same first and last characters as your saved ` +
-          `address ${shortAddress(known)}, but it is a DIFFERENT address. Scammers ` +
-          'manufacture such lookalikes and plant them in your transaction history so a ' +
-          'copy-paste sends funds to them instead. Re-copy the address from the person ' +
-          'who owns it — not from any transaction list.',
+        title: t(lang, 'sp.lookalikeTitle'),
+        detail: t(lang, 'sp.lookalikeDetail', {
+          target: shortAddress(target),
+          known: shortAddress(known),
+        }),
       });
       break;
     }
@@ -94,12 +94,13 @@ export function assessSpoofing(input: SpoofingInput): RiskFinding[] {
       findings.push({
         id: 'token-impersonation',
         severity: 'danger',
-        title: `This is not the ${impersonated.symbol} you know`,
-        detail:
-          `The contract at ${shortAddress(tx.token.address)} calls itself ` +
-          `"${tx.token.symbol}", but the ${impersonated.symbol} you taught PreFlight lives at ` +
-          `${shortAddress(impersonated.address!)}. Symbols are not unique — anyone can deploy ` +
-          'a token with a famous name. Treat this one as a stranger wearing a name tag.',
+        title: t(lang, 'sp.impersonationTitle', { symbol: impersonated.symbol }),
+        detail: t(lang, 'sp.impersonationDetail', {
+          contract: shortAddress(tx.token.address),
+          symbol: tx.token.symbol,
+          known: impersonated.symbol,
+          knownAddress: shortAddress(impersonated.address!),
+        }),
       });
     }
   }
@@ -119,11 +120,8 @@ export function assessSpoofing(input: SpoofingInput): RiskFinding[] {
     findings.push({
       id: 'zero-value-transfer',
       severity: 'caution',
-      title: 'This transfers exactly nothing',
-      detail:
-        'A zero-amount transfer moves no tokens; its only effect is an event in ' +
-        'transaction histories. That is the raw material of address poisoning — if ' +
-        'you did not deliberately intend an empty transfer, decline it.',
+      title: t(lang, 'sp.zeroTransferTitle'),
+      detail: t(lang, 'sp.zeroTransferDetail'),
     });
   }
 

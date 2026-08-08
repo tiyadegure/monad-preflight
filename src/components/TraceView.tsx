@@ -10,19 +10,33 @@ interface Props {
   lang: Lang;
 }
 
-function describeEvent(e: DecodedEvent): string {
+function describeEvent(e: DecodedEvent, lang: Lang): string {
   const a = e.args ?? {};
   switch (e.name) {
     case 'Transfer':
-      return `Transfer · ${shortAddress(a.from ?? '')} → ${shortAddress(a.to ?? '')} · ${a.value ?? '?'} units`;
+      return t(lang, 'trace.transfer', {
+        from: shortAddress(a.from ?? ''),
+        to: shortAddress(a.to ?? ''),
+        value: a.value ?? '?',
+      });
     case 'Approval':
-      return `Approval · ${shortAddress(a.owner ?? '')} lets ${shortAddress(a.spender ?? '')} spend ${a.value ?? '?'} units`;
+      return t(lang, 'trace.approval', {
+        owner: shortAddress(a.owner ?? ''),
+        spender: shortAddress(a.spender ?? ''),
+        value: a.value ?? '?',
+      });
     case 'Deposit':
-      return `Deposit (wrap) · ${shortAddress(a.dst ?? '')} · ${a.wad ?? '?'} units`;
+      return t(lang, 'trace.deposit', {
+        dst: shortAddress(a.dst ?? ''),
+        value: a.wad ?? '?',
+      });
     case 'Withdrawal':
-      return `Withdrawal (unwrap) · ${shortAddress(a.src ?? '')} · ${a.wad ?? '?'} units`;
+      return t(lang, 'trace.withdrawal', {
+        src: shortAddress(a.src ?? ''),
+        value: a.wad ?? '?',
+      });
     default:
-      return `unrecognized event from ${shortAddress(e.address)}`;
+      return t(lang, 'trace.unknown', { addr: shortAddress(e.address) });
   }
 }
 
@@ -45,9 +59,9 @@ export function TraceView({ frames, events, lang }: Props) {
             style={{ paddingLeft: `${12 + f.depth * 16}px` }}
           >
             <span className="trace-type">{f.type}</span>{' '}
-            {shortAddress(f.from)} → {f.to ? shortAddress(f.to) : '(create)'}
+            {shortAddress(f.from)} → {f.to ? shortAddress(f.to) : t(lang, 'trace.create')}
             {f.valueWei > 0n && <> · {formatTokenAmount(f.valueWei, NATIVE_MON)}</>}
-            {f.gasUsed > 0n && <> · {f.gasUsed.toString()} gas</>}
+            {f.gasUsed > 0n && <> · {t(lang, 'trace.gasSuffix', { gas: f.gasUsed.toString() })}</>}
             {f.error && <> · ⚠ {f.revertReason ?? f.error}</>}
           </div>
         ))}
@@ -60,7 +74,7 @@ export function TraceView({ frames, events, lang }: Props) {
           <div className="trace-frames">
             {events.map((e, i) => (
               <div className="trace-row" key={i}>
-                {describeEvent(e)}
+                {describeEvent(e, lang)}
               </div>
             ))}
           </div>

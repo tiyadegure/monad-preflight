@@ -18,49 +18,55 @@ import type {
 } from './types';
 import { NATIVE_MON } from './types';
 import { formatTokenAmount, isSameAddress, shortAddress } from './format';
+import { t } from './i18n';
+import type { Lang } from './i18n';
 
 /* ------------------------------------------------------------------ */
 /* Headline                                                            */
 /* ------------------------------------------------------------------ */
 
-function headlineFor(tx: PreparedTx, sim: SimulationResult): string {
-  if (!sim.ok) return 'This transaction would fail — do not send it';
+function headlineFor(tx: PreparedTx, sim: SimulationResult, lang: Lang): string {
+  if (!sim.ok) return t(lang, 'expl.failHeadline');
 
   switch (tx.kind) {
     case 'native-transfer': {
       const token = tx.token ?? NATIVE_MON;
       const amount = tx.amountRaw ?? tx.value;
-      return `You are about to send ${formatTokenAmount(amount, token)}`;
+      return t(lang, 'expl.sendHeadline', { amount: formatTokenAmount(amount, token) });
     }
     case 'erc20-transfer': {
       if (tx.token && tx.amountRaw !== undefined) {
-        return `You are about to send ${formatTokenAmount(tx.amountRaw, tx.token)}`;
+        return t(lang, 'expl.sendHeadline', {
+          amount: formatTokenAmount(tx.amountRaw, tx.token),
+        });
       }
-      return 'You are about to send tokens';
+      return t(lang, 'expl.sendTokensHeadline');
     }
     case 'erc20-approve': {
-      const spender = tx.counterparty ? shortAddress(tx.counterparty) : 'another address';
-      const symbol = tx.token?.symbol ?? 'tokens';
-      return `You are about to let ${spender} spend your ${symbol}`;
+      const spender = tx.counterparty ? shortAddress(tx.counterparty) : t(lang, 'expl.otherAddress');
+      const symbol = tx.token?.symbol ?? t(lang, 'expl.tokens');
+      return t(lang, 'expl.approveHeadline', { spender, symbol });
     }
     case 'erc20-revoke': {
-      const spender = tx.counterparty ? shortAddress(tx.counterparty) : 'another address';
-      const symbol = tx.token?.symbol ?? 'tokens';
-      return `You are about to revoke ${spender}'s access to your ${symbol}`;
+      const spender = tx.counterparty ? shortAddress(tx.counterparty) : t(lang, 'expl.otherAddress');
+      const symbol = tx.token?.symbol ?? t(lang, 'expl.tokens');
+      return t(lang, 'expl.revokeHeadline', { spender, symbol });
     }
     case 'wrap': {
       // The amount is the native MON going in — formatted as MON.
       const amount = tx.amountRaw ?? tx.value;
-      return `You are about to wrap ${formatTokenAmount(amount, NATIVE_MON)} into WMON`;
+      return t(lang, 'expl.wrapHeadline', { amount: formatTokenAmount(amount, NATIVE_MON) });
     }
     case 'unwrap': {
       if (tx.token && tx.amountRaw !== undefined) {
-        return `You are about to unwrap ${formatTokenAmount(tx.amountRaw, tx.token)} back to MON`;
+        return t(lang, 'expl.unwrapHeadline', {
+          amount: formatTokenAmount(tx.amountRaw, tx.token),
+        });
       }
-      return 'You are about to unwrap WMON back to MON';
+      return t(lang, 'expl.unwrapAllHeadline');
     }
     case 'raw':
-      return 'You are about to run a custom transaction';
+      return t(lang, 'expl.customHeadline');
   }
 }
 
@@ -69,70 +75,73 @@ function headlineFor(tx: PreparedTx, sim: SimulationResult): string {
 /* ------------------------------------------------------------------ */
 
 /** "you send 0.5 MON" / "0x1234…abcd receives 10 tUSD" — lowercase clause. */
-function assetClause(change: AssetChange, userAddress: Address): string {
+function assetClause(change: AssetChange, userAddress: Address, lang: Lang): string {
   const amount = formatTokenAmount(
     change.deltaRaw < 0n ? -change.deltaRaw : change.deltaRaw,
     change.token,
   );
   if (isSameAddress(change.party, userAddress)) {
-    return change.deltaRaw < 0n ? `you send ${amount}` : `you receive ${amount}`;
+    return change.deltaRaw < 0n
+      ? t(lang, 'expl.youSendClause', { amount })
+      : t(lang, 'expl.youReceiveClause', { amount });
   }
   const who = shortAddress(change.party);
-  return change.deltaRaw < 0n ? `${who} sends ${amount}` : `${who} receives ${amount}`;
+  return change.deltaRaw < 0n
+    ? t(lang, 'expl.otherSendsClause', { who, amount })
+    : t(lang, 'expl.otherReceivesClause', { who, amount });
 }
 
-function approvalClause(change: ApprovalChange, userAddress: Address): string {
+function approvalClause(change: ApprovalChange, userAddress: Address, lang: Lang): string {
   const spender = shortAddress(change.spender);
   const whose = isSameAddress(change.owner, userAddress)
-    ? 'your'
-    : `${shortAddress(change.owner)}'s`;
+    ? t(lang, 'expl.your')
+    : t(lang, 'expl.possesiveOwner', { owner: shortAddress(change.owner) });
   const isRevoke = !change.unlimited && change.amountRaw === 0n;
   if (isRevoke) {
-    return `${spender} loses its permission to spend ${whose} ${change.token.symbol}`;
+    return t(lang, 'expl.approvalRevokeClause', { spender, whose, symbol: change.token.symbol });
   }
   if (change.unlimited) {
-    return `${spender} gets permission to move ALL of ${whose} ${change.token.symbol}`;
+    return t(lang, 'expl.approvalUnlimitedClause', {
+      spender,
+      whose,
+      symbol: change.token.symbol,
+    });
   }
-  return `${spender} gets permission to spend up to ${formatTokenAmount(
-    change.amountRaw,
-    change.token,
-  )} from ${whose} wallet`;
+  return t(lang, 'expl.approvalLimitClause', {
+    spender,
+    amount: formatTokenAmount(change.amountRaw, change.token),
+    whose,
+  });
 }
 
-function joinClauses(parts: string[]): string {
+function joinClauses(parts: string[], lang: Lang): string {
   if (parts.length <= 1) return parts.join('');
-  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+  return t(lang, 'expl.joinAnd', {
+    list: parts.slice(0, -1).join(t(lang, 'expl.joinSep')),
+    last: parts[parts.length - 1],
+  });
 }
 
-function outcomeFor(tx: PreparedTx, sim: SimulationResult, userAddress: Address): string {
+function outcomeFor(tx: PreparedTx, sim: SimulationResult, userAddress: Address, lang: Lang): string {
   if (!sim.ok) {
     const reason = sim.revertReason
-      ? `The reason given: ${sim.revertReason}.`
-      : 'It did not give a clear reason why.';
-    return (
-      `Our test run shows the network will reject this transaction. ${reason} ` +
-      'Sending it anyway would only waste gas — you would pay a fee and nothing else would happen.'
-    );
+      ? t(lang, 'expl.revertReason', { reason: sim.revertReason })
+      : t(lang, 'expl.noReason');
+    return t(lang, 'expl.rejectOutcome', { reason });
   }
 
   // Wrap/unwrap deserve a reassurance: it is the same money in a new coat.
   const oneToOne =
-    tx.kind === 'wrap' || tx.kind === 'unwrap'
-      ? ' Every 1 MON equals exactly 1 WMON, and you can convert back at any time.'
-      : '';
+    tx.kind === 'wrap' || tx.kind === 'unwrap' ? t(lang, 'expl.oneToOne') : '';
 
   const clauses = [
-    ...sim.assetChanges.map((c) => assetClause(c, userAddress)),
-    ...sim.approvalChanges.map((c) => approvalClause(c, userAddress)),
+    ...sim.assetChanges.map((c) => assetClause(c, userAddress, lang)),
+    ...sim.approvalChanges.map((c) => approvalClause(c, userAddress, lang)),
   ];
   if (clauses.length === 0) {
-    return (
-      'Our test run finished without errors, but it did not detect any balance ' +
-      'changes for your wallet. Check the details below before you sign.' +
-      oneToOne
-    );
+    return t(lang, 'expl.noChangesOutcome', { oneToOne });
   }
-  return `If you confirm this, ${joinClauses(clauses)}.${oneToOne}`;
+  return t(lang, 'expl.ifConfirm', { clauses: joinClauses(clauses, lang), oneToOne });
 }
 
 /* ------------------------------------------------------------------ */
@@ -140,35 +149,47 @@ function outcomeFor(tx: PreparedTx, sim: SimulationResult, userAddress: Address)
 /* ------------------------------------------------------------------ */
 
 /** "You send 0.5 MON" / "0x1234…abcd receives 10 tUSD" — capitalized bullet. */
-function assetBullet(change: AssetChange, userAddress: Address): string | null {
+function assetBullet(change: AssetChange, userAddress: Address, lang: Lang): string | null {
   if (change.deltaRaw === 0n) return null; // nothing moves — a line would only confuse
   const amount = formatTokenAmount(
     change.deltaRaw < 0n ? -change.deltaRaw : change.deltaRaw,
     change.token,
   );
   if (isSameAddress(change.party, userAddress)) {
-    return change.deltaRaw < 0n ? `You send ${amount}` : `You receive ${amount}`;
+    return change.deltaRaw < 0n
+      ? t(lang, 'expl.youSendBullet', { amount })
+      : t(lang, 'expl.youReceiveBullet', { amount });
   }
   const who = shortAddress(change.party);
-  return change.deltaRaw < 0n ? `${who} sends ${amount}` : `${who} receives ${amount}`;
+  return change.deltaRaw < 0n
+    ? t(lang, 'expl.otherSendsBullet', { who, amount })
+    : t(lang, 'expl.otherReceivesBullet', { who, amount });
 }
 
-function approvalBullet(change: ApprovalChange, userAddress: Address): string {
+function approvalBullet(change: ApprovalChange, userAddress: Address, lang: Lang): string {
   const spender = shortAddress(change.spender);
   const ownerIsUser = isSameAddress(change.owner, userAddress);
-  const whose = ownerIsUser ? 'your' : `${shortAddress(change.owner)}'s`;
+  const whose = ownerIsUser
+    ? t(lang, 'expl.your')
+    : t(lang, 'expl.possesiveOwner', { owner: shortAddress(change.owner) });
   const isRevoke = !change.unlimited && change.amountRaw === 0n;
   if (isRevoke) {
-    return `After this, ${spender} can no longer spend ${whose} ${change.token.symbol}`;
+    return t(lang, 'expl.approvalRevokeBullet', { spender, whose, symbol: change.token.symbol });
   }
   if (change.unlimited) {
-    const revoker = ownerIsUser ? 'you revoke' : 'they revoke';
-    return `After this, ${spender} can move ALL of ${whose} ${change.token.symbol}, now and in the future, until ${revoker} it`;
+    const revoker = ownerIsUser ? t(lang, 'expl.revokerYou') : t(lang, 'expl.revokerThey');
+    return t(lang, 'expl.approvalUnlimitedBullet', {
+      spender,
+      whose,
+      symbol: change.token.symbol,
+      revoker,
+    });
   }
-  return `After this, ${spender} can spend up to ${formatTokenAmount(
-    change.amountRaw,
-    change.token,
-  )} from ${whose} wallet at any time`;
+  return t(lang, 'expl.approvalLimitBullet', {
+    spender,
+    amount: formatTokenAmount(change.amountRaw, change.token),
+    whose,
+  });
 }
 
 /* ------------------------------------------------------------------ */
@@ -180,24 +201,26 @@ export function composeExplanation(
   sim: SimulationResult,
   risks: RiskFinding[],
   userAddress: Address,
+  lang: Lang = 'en',
 ): Explanation {
   const bullets: string[] = [];
 
   // 1. Every asset change, from the user's point of view.
   for (const change of sim.assetChanges) {
-    const line = assetBullet(change, userAddress);
+    const line = assetBullet(change, userAddress, lang);
     if (line) bullets.push(line);
   }
 
   // 2. Every approval change.
   for (const change of sim.approvalChanges) {
-    bullets.push(approvalBullet(change, userAddress));
+    bullets.push(approvalBullet(change, userAddress, lang));
   }
 
   // 3. Network fee.
   bullets.push(
-    `Network fee: about ${formatTokenAmount(sim.gasCostWei, NATIVE_MON)} ` +
-      '(your wallet shows the exact number before you confirm)',
+    t(lang, 'expl.networkFeeBullet', {
+      amount: formatTokenAmount(sim.gasCostWei, NATIVE_MON),
+    }),
   );
 
   // 4. Serious warnings, only when there are any.
@@ -205,8 +228,8 @@ export function composeExplanation(
   if (dangerCount > 0) {
     bullets.push(
       dangerCount === 1
-        ? '⚠ 1 serious warning below — read it before signing.'
-        : `⚠ ${dangerCount} serious warnings below — read them before signing.`,
+        ? t(lang, 'expl.warnOne')
+        : t(lang, 'expl.warnMany', { count: dangerCount }),
     );
   }
 
@@ -214,8 +237,8 @@ export function composeExplanation(
   bullets.push(...sim.notes);
 
   return {
-    headline: headlineFor(tx, sim),
-    outcome: outcomeFor(tx, sim, userAddress),
+    headline: headlineFor(tx, sim, lang),
+    outcome: outcomeFor(tx, sim, userAddress, lang),
     bullets,
   };
 }

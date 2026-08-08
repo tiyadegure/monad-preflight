@@ -9,6 +9,8 @@ import type {
 import { NATIVE_MON } from './types';
 import type { MinedReceipt } from './types';
 import { formatTokenAmount, isSameAddress, shortAddress } from './format';
+import { t } from './i18n';
+import type { Lang } from './i18n';
 
 /**
  * After the transaction lands, compare what we PROMISED (the pre-sign
@@ -29,10 +31,12 @@ function topicToAddress(topic: Hex): Address {
   return `0x${topic.slice(-40)}` as Address;
 }
 
-function signedAmount(raw: bigint, token: TokenInfo): string {
+function signedAmount(raw: bigint, token: TokenInfo, lang: Lang): string {
   const abs = raw < 0n ? -raw : raw;
-  const verb = raw < 0n ? 'you sent' : 'you received';
-  return `${verb} ${formatTokenAmount(abs, token)}`;
+  const verb = t(lang, raw < 0n ? 'pf.youSent' : 'pf.youReceived', {
+    amount: formatTokenAmount(abs, token),
+  });
+  return verb;
 }
 
 export function comparePostFlight(
@@ -40,14 +44,15 @@ export function comparePostFlight(
   sim: SimulationResult,
   receipt: MinedReceipt,
   userAddress: Address,
+  lang: Lang = 'en',
 ): PostFlightCheck {
   const lines: PostFlightCheck['lines'] = [];
 
   // 1. Outcome — fully verifiable from the receipt status.
   lines.push({
-    label: 'Outcome',
-    simulated: sim.ok ? 'will succeed' : 'would fail',
-    actual: receipt.status === 'success' ? 'succeeded' : 'reverted',
+    label: t(lang, 'pf.outcome'),
+    simulated: sim.ok ? t(lang, 'pf.willSucceed') : t(lang, 'pf.wouldFail'),
+    actual: receipt.status === 'success' ? t(lang, 'pf.succeeded') : t(lang, 'pf.reverted'),
     status: sim.ok === (receipt.status === 'success') ? 'matched' : 'mismatched',
   });
 
@@ -80,9 +85,9 @@ export function comparePostFlight(
     coveredTokens.add(key);
     const actual = actualByToken.get(key) ?? 0n;
     lines.push({
-      label: `${change.token.symbol} movement`,
-      simulated: signedAmount(change.deltaRaw, change.token),
-      actual: signedAmount(actual, change.token),
+      label: t(lang, 'pf.movementLabel', { symbol: change.token.symbol }),
+      simulated: signedAmount(change.deltaRaw, change.token, lang),
+      actual: signedAmount(actual, change.token, lang),
       status: actual === change.deltaRaw ? 'matched' : 'mismatched',
     });
   }
@@ -95,11 +100,18 @@ export function comparePostFlight(
     // token would read as 0.000000000005 instead of 5). Show raw units and
     // say they are raw units.
     lines.push({
-      label: 'Unexpected token movement',
-      simulated: 'nothing',
+      label: t(lang, 'pf.unexpected'),
+      simulated: t(lang, 'pf.nothing'),
       actual:
-        `${actual < 0n ? 'you sent' : 'you received'} ${(actual < 0n ? -actual : actual).toString()} ` +
-        `raw units of the token at ${shortAddress(key)}`,
+        actual < 0n
+          ? t(lang, 'pf.sentRaw', {
+              amount: (-actual).toString(),
+              address: shortAddress(key),
+            })
+          : t(lang, 'pf.receivedRaw', {
+              amount: actual.toString(),
+              address: shortAddress(key),
+            }),
       status: 'mismatched',
     });
   }
@@ -119,16 +131,13 @@ export function comparePostFlight(
     const provenBySuccess =
       plainTransfer && receipt.status === 'success' && simNative.deltaRaw === -tx.value;
     lines.push({
-      label: 'MON movement',
-      simulated: signedAmount(simNative.deltaRaw, NATIVE_MON),
+      label: t(lang, 'pf.monMovement'),
+      simulated: signedAmount(simNative.deltaRaw, NATIVE_MON, lang),
       actual: provenBySuccess
-        ? signedAmount(-tx.value, NATIVE_MON)
-        : 'not recorded in the receipt',
+        ? signedAmount(-tx.value, NATIVE_MON, lang)
+        : t(lang, 'pf.notRecorded'),
       status: provenBySuccess ? 'matched' : 'unverified',
-      note: provenBySuccess
-        ? undefined
-        : 'A receipt does not record MON moved inside a contract call, so we cannot ' +
-          'confirm this one independently. Your wallet balance is the check here.',
+      note: provenBySuccess ? undefined : t(lang, 'pf.noteUnrecorded'),
     });
   }
 
@@ -145,18 +154,17 @@ export function comparePostFlight(
         isSameAddress(topicToAddress(log.topics[1]), userAddress),
     );
     lines.push({
-      label: `${approval.token.symbol} permission`,
+      label: t(lang, 'pf.permissionLabel', { symbol: approval.token.symbol }),
       simulated: approval.unlimited
-        ? 'unlimited spending granted'
-        : `spending up to ${formatTokenAmount(approval.amountRaw, approval.token)} granted`,
+        ? t(lang, 'pf.unlimitedGranted')
+        : t(lang, 'pf.cappedGranted', {
+            amount: formatTokenAmount(approval.amountRaw, approval.token),
+          }),
       actual: sawApprovalEvent
-        ? 'the token confirmed a permission change'
-        : 'no permission change recorded',
+        ? t(lang, 'pf.confirmedChange')
+        : t(lang, 'pf.noChangeRecorded'),
       status: sawApprovalEvent ? 'unverified' : 'mismatched',
-      note: sawApprovalEvent
-        ? 'The token reported a permission change, but the exact remaining amount ' +
-          'lives in the contract — check the Hangar to see it.'
-        : undefined,
+      note: sawApprovalEvent ? t(lang, 'pf.notePermission') : undefined,
     });
   }
 
@@ -164,11 +172,13 @@ export function comparePostFlight(
   //    fee, so this is reported, never counted as agreement or conflict.
   const actualFee = receipt.gasUsed * receipt.effectiveGasPrice;
   lines.push({
-    label: 'Network fee',
-    simulated: `about ${formatTokenAmount(sim.gasCostWei, NATIVE_MON)}`,
+    label: t(lang, 'pf.feeLabel'),
+    simulated: t(lang, 'pf.about', {
+      amount: formatTokenAmount(sim.gasCostWei, NATIVE_MON),
+    }),
     actual: formatTokenAmount(actualFee, NATIVE_MON),
     status: 'unverified',
-    note: 'Fee estimates are always approximate; this is what you were actually charged.',
+    note: t(lang, 'pf.noteFee'),
   });
 
   return {

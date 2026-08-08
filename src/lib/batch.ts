@@ -13,6 +13,8 @@
 import { getAddress } from 'viem';
 import type { Address, Hex, RiskFinding } from './types';
 import { isHexData } from './format';
+import { t } from './i18n';
+import type { Lang } from './i18n';
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -52,18 +54,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /** "1st", "2nd", "3rd", "4th", ... with correct 11th/12th/13th. */
-function ordinal(n: number): string {
+function ordinal(n: number, lang: Lang): string {
   const rem100 = n % 100;
-  if (rem100 >= 11 && rem100 <= 13) return `${n}th`;
+  if (rem100 >= 11 && rem100 <= 13) return t(lang, 'bt.ordinalNth', { n });
   switch (n % 10) {
     case 1:
-      return `${n}st`;
+      return t(lang, 'bt.ordinal1st');
     case 2:
-      return `${n}nd`;
+      return t(lang, 'bt.ordinal2nd');
     case 3:
-      return `${n}rd`;
+      return t(lang, 'bt.ordinal3rd');
     default:
-      return `${n}th`;
+      return t(lang, 'bt.ordinalNth', { n });
   }
 }
 
@@ -130,15 +132,15 @@ export function looksLikeBatch(value: unknown): boolean {
  * ({ version?, chainId?, from?, atomicRequired?, calls: [{ to, data?, value? }] }),
  * a bare array of calls, or a JSON string of either. Never throws.
  */
-export function parseBatch(value: unknown): ParsedBatch | { error: string } {
+export function parseBatch(value: unknown, lang: Lang = 'en'): ParsedBatch | { error: string } {
   try {
-    return parseBatchInner(value);
+    return parseBatchInner(value, lang);
   } catch {
-    return { error: 'We could not read this bundle of instructions.' };
+    return { error: t(lang, 'bt.cantReadBundle') };
   }
 }
 
-function parseBatchInner(value: unknown): ParsedBatch | { error: string } {
+function parseBatchInner(value: unknown, lang: Lang): ParsedBatch | { error: string } {
   let input = value;
 
   if (typeof input === 'string') {
@@ -146,8 +148,7 @@ function parseBatchInner(value: unknown): ParsedBatch | { error: string } {
       input = JSON.parse(input) as unknown;
     } catch {
       return {
-        error:
-          'This text could not be read as a bundle of instructions — it is not in a format we understand.',
+        error: t(lang, 'bt.notFormat'),
       };
     }
   }
@@ -165,12 +166,12 @@ function parseBatchInner(value: unknown): ParsedBatch | { error: string } {
     fromRaw = input['from'];
     atomicRaw = input['atomicRequired'];
   } else {
-    return { error: 'We could not read this as a bundle of instructions.' };
+    return { error: t(lang, 'bt.cantReadBundle') };
   }
 
   if (rawCalls.length === 0) {
     return {
-      error: 'This bundle is empty. A bundle needs at least one instruction to do anything.',
+      error: t(lang, 'bt.empty'),
     };
   }
 
@@ -180,26 +181,26 @@ function parseBatchInner(value: unknown): ParsedBatch | { error: string } {
   if (totalCalls > MAX_BATCH_CALLS) {
     rawCalls = rawCalls.slice(0, MAX_BATCH_CALLS);
     notes.push(
-      `This bundle contains ${totalCalls} instructions. We only checked the first ${MAX_BATCH_CALLS} — the rest were not checked at all.`,
+      t(lang, 'bt.truncated', { total: totalCalls, max: MAX_BATCH_CALLS }),
     );
   }
 
   const calls: BatchCall[] = [];
   for (let i = 0; i < rawCalls.length; i += 1) {
     const raw = rawCalls[i];
-    const position = ordinal(i + 1);
+    const position = ordinal(i + 1, lang);
 
     const item: Record<string, unknown> = isRecord(raw) ? raw : {};
 
     const to = toValidAddress(item['to']);
     if (to === null) {
-      return { error: `The ${position} instruction has an invalid destination address.` };
+      return { error: t(lang, 'bt.invalidTo', { position }) };
     }
 
     const dataRaw = item['data'] ?? '0x';
     if (typeof dataRaw !== 'string' || !isHexData(dataRaw)) {
       return {
-        error: `The ${position} instruction contains data we could not read, so we cannot safely check it.`,
+        error: t(lang, 'bt.unreadableData', { position }),
       };
     }
 
@@ -207,7 +208,7 @@ function parseBatchInner(value: unknown): ParsedBatch | { error: string } {
     if (item['value'] !== undefined && item['value'] !== null) {
       const parsed = parseQuantity(item['value']);
       if (parsed === null) {
-        return { error: `The ${position} instruction has an amount we could not read.` };
+        return { error: t(lang, 'bt.unreadableValue', { position }) };
       }
       callValue = parsed;
     }
@@ -217,14 +218,10 @@ function parseBatchInner(value: unknown): ParsedBatch | { error: string } {
 
   const atomic = Boolean(atomicRaw);
   if (!atomic) {
-    notes.push(
-      'These instructions can land separately, so some may succeed while others fail.',
-    );
+    notes.push(t(lang, 'bt.notAtomicNote'));
   }
   if (calls.length > LONG_BATCH_THRESHOLD) {
-    notes.push(
-      'This is a long list of instructions. Long bundles are hard to check, so give each one extra care.',
-    );
+    notes.push(t(lang, 'bt.longNote'));
   }
 
   const result: ParsedBatch = { calls, atomic, notes };
@@ -247,15 +244,15 @@ function parseBatchInner(value: unknown): ParsedBatch | { error: string } {
 /* ------------------------------------------------------------------ */
 
 /** One plain sentence saying what this bundle is and how it lands. */
-export function describeBatch(batch: ParsedBatch): string {
+export function describeBatch(batch: ParsedBatch, lang: Lang = 'en'): string {
   const n = batch.calls.length;
   const base =
     n === 1
-      ? 'This is 1 instruction bundled into one confirmation.'
-      : `This is ${n} separate instructions bundled into one confirmation.`;
+      ? t(lang, 'bt.describeOne')
+      : t(lang, 'bt.describeMany', { n });
   const tail = batch.atomic
-    ? ' They must all succeed together.'
-    : ' They can land separately.';
+    ? t(lang, 'bt.atomicTail')
+    : t(lang, 'bt.separateTail');
   return base + tail;
 }
 
@@ -264,7 +261,7 @@ export function describeBatch(batch: ParsedBatch): string {
 /* ------------------------------------------------------------------ */
 
 /** Deterministic risk findings for the bundle as a whole. */
-export function batchRisks(batch: ParsedBatch): RiskFinding[] {
+export function batchRisks(batch: ParsedBatch, lang: Lang = 'en'): RiskFinding[] {
   const findings: RiskFinding[] = [];
   const count = batch.calls.length;
 
@@ -272,11 +269,8 @@ export function batchRisks(batch: ParsedBatch): RiskFinding[] {
     findings.push({
       id: 'batch-hidden-actions',
       severity: 'danger',
-      title: 'One confirmation covers several actions',
-      detail:
-        `Approving this signs off on every one of the ${count} instructions at once,` +
-        ' and your wallet may only show you one of them.' +
-        ' Read each instruction below before you continue.',
+      title: t(lang, 'bt.hiddenTitle'),
+      detail: t(lang, 'bt.hiddenDetail', { count }),
     });
   }
 
@@ -284,10 +278,8 @@ export function batchRisks(batch: ParsedBatch): RiskFinding[] {
     findings.push({
       id: 'batch-not-atomic',
       severity: 'caution',
-      title: 'These instructions can land separately',
-      detail:
-        'These instructions are not tied together — some may succeed while others fail.' +
-        ' You could end up with only part of what you expected.',
+      title: t(lang, 'bt.notAtomicTitle'),
+      detail: t(lang, 'bt.notAtomicDetail'),
     });
   }
 
@@ -295,11 +287,8 @@ export function batchRisks(batch: ParsedBatch): RiskFinding[] {
     findings.push({
       id: 'batch-large',
       severity: 'caution',
-      title: 'This is a long list of instructions',
-      detail:
-        `There are ${count} instructions behind this one confirmation.` +
-        ' A long list is hard to check carefully, and hiding one bad instruction in a long list is a known trick.' +
-        ' Take extra time on each one.',
+      title: t(lang, 'bt.largeTitle'),
+      detail: t(lang, 'bt.largeDetail', { count }),
     });
   }
 
@@ -307,9 +296,8 @@ export function batchRisks(batch: ParsedBatch): RiskFinding[] {
     findings.push({
       id: 'batch-single',
       severity: 'info',
-      title: 'Only one instruction inside',
-      detail:
-        'This bundle contains just one instruction, so it behaves like a normal single transaction.',
+      title: t(lang, 'bt.singleTitle'),
+      detail: t(lang, 'bt.singleDetail'),
     });
   }
 

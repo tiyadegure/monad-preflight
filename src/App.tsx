@@ -64,17 +64,8 @@ import { decodeShareLink, encodeShareLink } from './lib/sharelink';
 import { installShortcuts } from './lib/shortcuts';
 import { loadBook, resolveNames } from './lib/addressbook';
 import type { AddressBookEntry } from './lib/addressbook';
-import {
-  connect,
-  ensureNetwork,
-  getConnectedAccount,
-  getInjectedProvider,
-  getWalletChainId,
-  onAccountsChanged,
-  onChainChanged,
-  sendTransaction,
-  waitForReceipt,
-} from './lib/wallet';
+import { useAccount, useSwitchChain, useWalletClient } from 'wagmi';
+import { getInjectedProvider, waitForReceipt } from './lib/wallet';
 import { aiNarrative, aiParseIntent, createAiClient } from './lib/claude';
 import { StatusStrip } from './components/StatusStrip';
 import { IntentConsole } from './components/IntentConsole';
@@ -175,7 +166,14 @@ function plainError(err: unknown): string {
 }
 
 export default function App() {
-  const provider = useMemo(() => getInjectedProvider(), []);
+  // Wallet state comes from wagmi now: accounts/chain changes are watched by
+  // the connector itself, so there is no hand-rolled provider plumbing here.
+  const { address, chainId } = useAccount();
+  const { data: walletClient } = useWalletClient();
+  const { switchChainAsync } = useSwitchChain();
+  const account = address ?? null;
+  const walletChainId = chainId ?? null;
+  const hasWallet = getInjectedProvider() !== null;
 
   const [lang, setLang] = useState<Lang>(() => detectLang());
   const t = useCallback(
@@ -193,10 +191,7 @@ export default function App() {
   const reader = useMemo(() => viemChainReader(client), [client]);
 
   const [view, setView] = useState<View>('fly');
-  const [account, setAccount] = useState<Address | null>(null);
-  const [walletChainId, setWalletChainId] = useState<number | null>(null);
   const [balanceWei, setBalanceWei] = useState<bigint | null>(null);
-  const [connecting, setConnecting] = useState(false);
 
   const [apiKey, setApiKey] = useState(() => readStored(LS_API_KEY) ?? '');
   const [aiProxyUrl, setAiProxyUrl] = useState(
@@ -275,41 +270,29 @@ export default function App() {
 
   /* ---- wallet lifecycle ---- */
 
+  // wagmi's useAccount tracks accountsChanged/chainChanged itself, but the
+  // plan-drop guard still needs to run: a plan is built for one specific
+  // account, and if the wallet switches users it must not stay signable.
+  const prevAccountRef = useRef<Address | null>(null);
   useEffect(() => {
-    if (!provider) return;
-    getConnectedAccount(provider).then(setAccount);
-    getWalletChainId(provider).then(setWalletChainId).catch(() => {});
-    const offAccounts = onAccountsChanged(provider, (accounts) => {
-      const next = accounts[0] ?? null;
-      setAccount((current) => {
-        // A plan is built for one specific account. If the wallet switches
-        // users, that plan is no longer theirs — drop it rather than leave
-        // a signable transaction belonging to someone else on screen.
-        if (current && next?.toLowerCase() !== current.toLowerCase()) {
-          // Invalidate any prepare still in flight: a plan built for the
-          // old account must not install itself under the new one right
-          // after we told the user it was cleared.
-          prepareRun.current += 1;
-          setPlan(null);
-          setPostflight(null);
-          setTxHash(null);
-          setDrift(null);
-          setScan(null);
-          setQueue(null);
-          setPhase('idle');
-          setErrorMsg(translate(langRef.current, 'error.accountSwitched'));
-        }
-        return next;
-      });
-    });
-    const offChain = onChainChanged(provider, (hex) => {
-      setWalletChainId(Number.parseInt(hex, 16));
-    });
-    return () => {
-      offAccounts();
-      offChain();
-    };
-  }, [provider]);
+    const next = account;
+    const prev = prevAccountRef.current;
+    if (prev && (!next || next.toLowerCase() !== prev.toLowerCase())) {
+      // Invalidate any prepare still in flight: a plan built for the old
+      // account must not install itself under the new one right after we
+      // told the user it was cleared.
+      prepareRun.current += 1;
+      setPlan(null);
+      setPostflight(null);
+      setTxHash(null);
+      setDrift(null);
+      setScan(null);
+      setQueue(null);
+      setPhase('idle');
+      setErrorMsg(translate(langRef.current, 'error.accountSwitched'));
+    }
+    prevAccountRef.current = next;
+  }, [account]);
 
   useEffect(() => {
     refreshBalance(account);
@@ -366,27 +349,9 @@ export default function App() {
     saveLang(next);
   };
 
-  const handleConnect = async () => {
-    if (!provider) return;
-    setConnecting(true);
-    setErrorMsg(null);
-    try {
-      const a = await connect(provider);
-      setAccount(a);
-      await ensureNetwork(provider, network);
-      setWalletChainId(await getWalletChainId(provider));
-    } catch (err) {
-      setErrorMsg(plainError(err));
-    } finally {
-      setConnecting(false);
-    }
-  };
-
   const handleSwitchWalletNetwork = async () => {
-    if (!provider) return;
     try {
-      await ensureNetwork(provider, network);
-      setWalletChainId(await getWalletChainId(provider));
+      await switchChainAsync({ chainId: network.chainId });
     } catch (err) {
       setErrorMsg(plainError(err));
     }
@@ -415,12 +380,12 @@ export default function App() {
   const handleAddToken = async (address: string) => {
     setAddTokenError(null);
     if (!isAddressFormat(address)) {
-      setAddTokenError('That is not a valid contract address (0x + 40 hex characters).');
+      setAddTokenError(t('app.invalidContractAddress'));
       return;
     }
     setAddTokenBusy(true);
     try {
-      const info = await reader.fetchTokenInfo(address);
+      const info = await reader.fetchTokenInfo(address, lang);
       persistTokens(addToken(registry, info).tokens);
     } catch (err) {
       setAddTokenError(plainError(err));
@@ -455,13 +420,13 @@ export default function App() {
         // 0. Swap saved names ("alice") for their addresses before parsing.
         const { text, resolved } = resolveNames(rawText.trim(), book);
         const bookNotes = resolved.map(
-          (e) => `"${e.name}" is your saved name for ${e.address}.`,
+          (e) => t('app.bookNameNote', { name: e.name, address: e.address }),
         );
 
         // 1. Parse: rules first; Claude as fallback when AI is configured.
         let intent: ParsedIntent | null = null;
         let source: 'rules' | 'ai' = 'rules';
-        const ruleResult = parseIntent(text);
+        const ruleResult = parseIntent(text, lang);
         if (ruleResult.ok) {
           intent = ruleResult.intent;
         } else if (aiAvailable) {
@@ -478,7 +443,7 @@ export default function App() {
         if (!intent) {
           setParseFailure(
             ruleResult.ok
-              ? { ok: false, reason: 'Could not understand that.', suggestions: [] }
+              ? { ok: false, reason: t('app.couldNotUnderstand'), suggestions: [] }
               : ruleResult,
           );
           setPhase('idle');
@@ -492,7 +457,7 @@ export default function App() {
           registry,
           reader,
           wmon: network.wmon,
-        });
+        }, lang);
 
         if (tx.token?.address && !findToken(registry, tx.token.address)) {
           persistTokens(addToken(registry, tx.token).tokens);
@@ -522,6 +487,7 @@ export default function App() {
             // one of these is the attack.
             knownAddresses: [account, ...book.map((e) => e.address)],
             knownTokens: tokens,
+            lang,
           },
         );
         if (bookNotes.length > 0) explanation.bullets.push(...bookNotes);
@@ -590,6 +556,8 @@ export default function App() {
       aiProxyUrl,
       book,
       client,
+      t,
+      lang,
       network,
       networkKey,
       persistTokens,
@@ -680,7 +648,7 @@ export default function App() {
    * the user consciously overrides that.
    */
   const handleSign = useCallback(async (force = false) => {
-    if (!plan || !provider) return;
+    if (!plan || !account || !walletClient) return;
 
     // Last line of defence against signing a plan that belongs to another
     // chain or another account. The prepare path already discards stale
@@ -713,7 +681,7 @@ export default function App() {
 
     if (!force) {
       try {
-        const fresh = await simulateTx(plan.tx, rpc);
+        const fresh = await simulateTx(plan.tx, rpc, lang);
         const report = compareSimulations(plan.sim, fresh, {
           simulatedAtMs: plan.simulatedAtMs,
           nowMs: Date.now(),
@@ -731,7 +699,7 @@ export default function App() {
               .getBalance({ address: plan.tx.from })
               .catch(() => plan.riskContext.senderBalanceWei),
           };
-          const freshRisks = assessRisks(plan.tx, fresh, freshCtx);
+          const freshRisks = assessRisks(plan.tx, fresh, freshCtx, lang);
           for (const f of plan.reputationFindings) {
             if (!freshRisks.some((r) => r.title === f.title)) freshRisks.push(f);
           }
@@ -760,14 +728,25 @@ export default function App() {
     let broadcast = false;
     let sentHash: Hex | null = null;
     try {
-      await ensureNetwork(provider, network);
-      const hash = await sendTransaction(provider, plan.tx);
+      // The wallet's own chain must match the plan's network before we ask
+      // it to broadcast — otherwise a testnet plan could go out on mainnet.
+      // wagmi's switchChainAsync also adds the network to the wallet if it
+      // is not present (the old ensureNetwork's wallet_addEthereumChain step).
+      if (walletChainId !== network.chainId) {
+        await switchChainAsync({ chainId: network.chainId });
+      }
+      const hash = await walletClient.sendTransaction({
+        account: plan.tx.from,
+        to: plan.tx.to,
+        data: plan.tx.data,
+        value: plan.tx.value,
+      });
       broadcast = true;
       sentHash = hash;
       setTxHash(hash);
       setPhase('pending');
       const receipt = await waitForReceipt(client, hash);
-      const check = comparePostFlight(plan.tx, plan.sim, receipt, plan.tx.from);
+      const check = comparePostFlight(plan.tx, plan.sim, receipt, plan.tx.from, lang);
       setPostflight(check);
       setPhase('landed');
       // In a journey, this leg is now over — record how it ended so the
@@ -833,7 +812,7 @@ export default function App() {
         setPhase('ready');
       }
     }
-  }, [account, client, network, networkKey, plan, provider, queue, refreshBalance, rpc, t]);
+  }, [account, client, lang, network, networkKey, plan, queue, refreshBalance, rpc, switchChainAsync, t, walletChainId, walletClient]);
 
   const handleDiscard = useCallback(() => {
     // Stop means stop: a prepare still running must not resolve seconds
@@ -927,7 +906,7 @@ export default function App() {
       // health verdict reflects one moment rather than a stitched-together
       // picture from two different times.
       const [result, ownCode, ownBalance] = await Promise.all([
-        scanApprovals(rpc, account),
+        scanApprovals(rpc, account, { lang }),
         client.getCode({ address: account }).catch(() => undefined),
         client.getBalance({ address: account }).catch(() => null),
       ]);
@@ -935,26 +914,29 @@ export default function App() {
 
       const unlimited = result.records.filter((r) => r.unlimited).length;
       setHealth(
-        assessWalletHealth({
-          // undefined from a failed read means "we could not check", which
-          // must stay distinct from "not delegated".
-          delegated: ownCode === undefined ? null : detectDelegation(ownCode),
-          unlimitedApprovals: result.complete ? unlimited : null,
-          totalApprovals: result.complete ? result.records.length : null,
-          scanComplete: result.complete,
-          nativeBalanceWei: ownBalance,
-          exposedTokenCount: result.complete
-            ? computeExposure({
-                balances: [],
-                approvals: result.records.map((r) => ({
-                  token: r.token,
-                  spender: r.spender,
-                  allowanceRaw: r.allowanceRaw,
-                  unlimited: r.unlimited,
-                })),
-              }).totalTokensAtRisk
-            : null,
-        }),
+        assessWalletHealth(
+          {
+            // undefined from a failed read means "we could not check", which
+            // must stay distinct from "not delegated".
+            delegated: ownCode === undefined ? null : detectDelegation(ownCode),
+            unlimitedApprovals: result.complete ? unlimited : null,
+            totalApprovals: result.complete ? result.records.length : null,
+            scanComplete: result.complete,
+            nativeBalanceWei: ownBalance,
+            exposedTokenCount: result.complete
+              ? computeExposure({
+                  balances: [],
+                  approvals: result.records.map((r) => ({
+                    token: r.token,
+                    spender: r.spender,
+                    allowanceRaw: r.allowanceRaw,
+                    unlimited: r.unlimited,
+                  })),
+                }).totalTokensAtRisk
+              : null,
+          },
+          lang,
+        ),
       );
     } catch (err) {
       setErrorMsg(plainError(err));
@@ -981,7 +963,9 @@ export default function App() {
       setShareCopied(true);
       setTimeout(() => setShareCopied(false), 2000);
     } catch {
-      setErrorMsg('Could not copy — your browser blocked clipboard access.');
+      setErrorMsg(
+        t('app.clipboardBlocked'),
+      );
     }
   };
 
@@ -997,17 +981,18 @@ export default function App() {
       hash: txHash,
       explorerHref: txHash ? txUrl(network, txHash) : null,
       generatedAt: new Date().toISOString(),
+      lang,
     });
     try {
       await navigator.clipboard.writeText(md);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      setErrorMsg('Could not copy — your browser blocked clipboard access.');
+      setErrorMsg(t('app.clipboardBlocked'));
     }
   };
 
-  const disabledReason = !provider
+  const disabledReason = !hasWallet
     ? t('error.noWalletHint')
     : !account
       ? t('error.connectHint')
@@ -1022,14 +1007,11 @@ export default function App() {
           <span className="brand-mark">▲</span> Monad PreFlight
         </h1>
         <StatusStrip
-          hasWallet={!!provider}
           account={account}
           walletChainId={walletChainId}
           balanceWei={balanceWei}
-          connecting={connecting}
           network={network}
           lang={lang}
-          onConnect={handleConnect}
           onSwitchWalletNetwork={handleSwitchWalletNetwork}
           onSelectNetwork={handleSelectNetwork}
           onSelectLang={handleSelectLang}
@@ -1037,7 +1019,7 @@ export default function App() {
       </header>
       <p className="tagline">{t('app.tagline', { network: netLabel })}</p>
 
-      <nav className="view-tabs" aria-label="Workspace">
+      <nav className="view-tabs" aria-label={t('app.workspaceAria')}>
         {(
           [
             ['fly', t('nav.fly')],
@@ -1122,7 +1104,7 @@ export default function App() {
               {parseFailure.reason}
               {parseFailure.suggestions.length > 0 && (
                 <div className="hint">
-                  Try one of these:
+                  {t('app.tryOneOfThese')}
                   <ul>
                     {parseFailure.suggestions.map((s) => (
                       <li key={s}>
@@ -1211,6 +1193,7 @@ export default function App() {
         <SignatureExplainer
           expectedChainIds={[network.chainId]}
           selfAddress={account}
+          lang={lang}
         />
       )}
 
@@ -1221,23 +1204,27 @@ export default function App() {
             getTransactionCount: (a) => client.getTransactionCount({ address: a }),
             getCode: (a) => client.getCode({ address: a }).then((c) => c ?? null),
           }}
-          scanApprovalsFor={(addr) => scanApprovals(rpc, addr)}
+          scanApprovalsFor={(addr) => scanApprovals(rpc, addr, { lang })}
           fetchBalancesFor={async (addr) => {
-            const result = await fetchBalances(client, addr, tokens);
+            const result = await fetchBalances(client, addr, tokens, lang);
             return result.tokens.map((b) => ({ token: b.token, raw: b.raw }));
           }}
-          computeExposure={(balances, approvalScan) =>
-            computeExposure({
-              balances,
-              approvals: approvalScan.records.map((r) => ({
-                token: r.token,
-                spender: r.spender,
-                allowanceRaw: r.allowanceRaw,
-                unlimited: r.unlimited,
-              })),
-            })
+          computeExposure={(balances, approvalScan, l) =>
+            computeExposure(
+              {
+                balances,
+                approvals: approvalScan.records.map((r) => ({
+                  token: r.token,
+                  spender: r.spender,
+                  allowanceRaw: r.allowanceRaw,
+                  unlimited: r.unlimited,
+                })),
+              },
+              l,
+            )
           }
           addressHref={(addr) => addressUrl(network, addr)}
+          lang={lang}
         />
       )}
 
