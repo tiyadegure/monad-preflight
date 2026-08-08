@@ -129,9 +129,6 @@ npm run deploy:token
 - 内置 Monad 蓝筹代币（USDe、sUSDe…）的权威代币注册表，让符号伪装防护零配置生效——刻意延后，等新部署的地址稳定并能在链上交叉验证之后；错误的权威条目比没有更糟
 - Aave v3 动词解码（supply / withdraw / borrow / repay），让 Monad 上流量最高的 DeFi 流程以自然语言呈现，而不是「不可读的原始调用」
 
-## AI 使用披露
-
-以 AI 辅助编码（Claude Code）构建：契约优先的规格、每模块单元测试、每行可解释。运行时 AI（Claude）可选、已标注，并严格限定在已核验的模拟器事实内。
 
 ## 许可证
 
