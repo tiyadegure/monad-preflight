@@ -11,6 +11,8 @@
 
 import { getAddress } from 'viem';
 import type { Address } from './types';
+import { t } from './i18n';
+import type { Lang } from './i18n';
 
 /** One saved contact: a friendly name and its checksummed address. */
 export interface AddressBookEntry {
@@ -49,21 +51,21 @@ function resolveStorage(storage?: BookStorage): BookStorage | undefined {
  * Why a proposed name is not usable, in plain language — or null if it
  * is fine. Checked in order of most helpful message first.
  */
-function nameProblem(name: string): string | null {
+function nameProblem(name: string, lang: Lang = 'en'): string | null {
   if (name.length === 0) {
-    return 'Please give this contact a name.';
+    return t(lang, 'book.needName');
   }
   if (name.length > 24) {
-    return 'That name is too long. Please keep it to 24 characters or fewer.';
+    return t(lang, 'book.tooLong');
   }
   if (/^0x/i.test(name)) {
-    return 'A name cannot start with "0x" — that looks like an address, which would be confusing. Please pick a different name.';
+    return t(lang, 'book.startsOx');
   }
   if (/^[0-9]+$/.test(name)) {
-    return 'A name cannot be numbers only — that could be mistaken for an amount. Please include at least one letter.';
+    return t(lang, 'book.numbersOnly');
   }
   if (!NAME_RE.test(name)) {
-    return 'Names can only use letters, numbers, hyphens (-) and underscores (_), with no spaces.';
+    return t(lang, 'book.allowedChars');
   }
   return null;
 }
@@ -147,9 +149,10 @@ export function loadBook(storage?: BookStorage): AddressBookEntry[] {
 export function saveEntry(
   entry: { name: string; address: string },
   storage?: BookStorage,
+  lang: Lang = 'en',
 ): AddressBookEntry[] {
   const name = typeof entry.name === 'string' ? entry.name.trim() : '';
-  const problem = nameProblem(name);
+  const problem = nameProblem(name, lang);
   if (problem !== null) throw new Error(problem);
 
   const rawAddress = typeof entry.address === 'string' ? entry.address.trim() : '';
@@ -157,9 +160,7 @@ export function saveEntry(
   try {
     address = getAddress(rawAddress);
   } catch {
-    throw new Error(
-      'That address does not look right. A real address starts with "0x" followed by 40 letters and numbers. Please copy the whole address and paste it again.',
-    );
+    throw new Error(t(lang, 'book.badAddress'));
   }
 
   const store = resolveStorage(storage);

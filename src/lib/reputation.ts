@@ -10,6 +10,8 @@
 
 import type { RiskFinding } from './types';
 import { formatAmount } from './format';
+import { t } from './i18n';
+import type { Lang } from './i18n';
 
 /* ------------------------------------------------------------------ */
 /* Contracts                                                           */
@@ -99,8 +101,10 @@ function fmt(n: number): string {
 }
 
 /** "1 time", "12,400 times" */
-function times(n: number): string {
-  return `${fmt(n)} ${n === 1 ? 'time' : 'times'}`;
+function times(n: number, lang: Lang): string {
+  return n === 1
+    ? t(lang, 'rep2.timesOne')
+    : t(lang, 'rep2.timesMany', { n: fmt(n) });
 }
 
 /* ------------------------------------------------------------------ */
@@ -110,6 +114,7 @@ function times(n: number): string {
 export function assessCounterparty(
   facts: CounterpartyFacts,
   ctx: { isApprovalTarget: boolean },
+  lang: Lang = 'en',
 ): Reputation {
   const findings: RiskFinding[] = [];
   const reasons: string[] = [];
@@ -121,16 +126,12 @@ export function assessCounterparty(
   // the classic wallet-drainer move.
   const approvalToWallet = ctx.isApprovalTarget && !facts.isContract;
   if (approvalToWallet) {
-    reasons.push(
-      'This address is a personal wallet, not a program — wallets never need permission to spend your tokens.',
-    );
+    reasons.push(t(lang, 'rep2.approvalWalletReason'));
     findings.push({
       id: 'cp-approval-to-wallet',
       severity: 'danger',
-      title: 'Giving token access to a personal wallet',
-      detail:
-        'You are about to let a personal wallet spend your tokens.' +
-        ' Real apps ask you to approve a program, not a person — this is the classic pattern of wallet-drainer scams.',
+      title: t(lang, 'rep2.approvalWalletTitle'),
+      detail: t(lang, 'rep2.approvalWalletDetail'),
     });
   }
 
@@ -144,15 +145,19 @@ export function assessCounterparty(
   if (drainerPattern) {
     const owners = facts.distinctOwnersApprovingRecently ?? 0;
     reasons.push(
-      `${fmt(owners)} people recently gave this address access to their tokens, yet it has only been used ${times(facts.txCount)}.`,
+      t(lang, 'rep2.drainerReason', {
+        owners: fmt(owners),
+        times: times(facts.txCount, lang),
+      }),
     );
     findings.push({
       id: 'cp-drainer-pattern',
       severity: 'danger',
-      title: 'Matches a fresh scam campaign pattern',
-      detail:
-        `${fmt(owners)} people recently gave this address access to their tokens, but it has only been used ${times(facts.txCount)}.` +
-        ' Lots of new permissions with almost no activity is the signature of a scam that just started.',
+      title: t(lang, 'rep2.drainerTitle'),
+      detail: t(lang, 'rep2.drainerDetail', {
+        owners: fmt(owners),
+        times: times(facts.txCount, lang),
+      }),
     });
   }
 
@@ -160,16 +165,12 @@ export function assessCounterparty(
   // cheap, disposable shells that drainer kits deploy in bulk.
   const tinyContract = facts.isContract && facts.codeSize < TINY_CONTRACT_MAX_CODE_SIZE;
   if (tinyContract) {
-    reasons.push(
-      `This program contains only ${fmt(facts.codeSize)} bytes of code — genuine apps are far larger.`,
-    );
+    reasons.push(t(lang, 'rep2.tinyReason', { bytes: fmt(facts.codeSize) }));
     findings.push({
       id: 'cp-tiny-contract',
       severity: 'caution',
-      title: 'This program is suspiciously small',
-      detail:
-        `The program at this address is only ${fmt(facts.codeSize)} bytes — real apps are far larger.` +
-        ' Tiny throwaway programs like this are common in wallet-drainer kits, so be extra careful.',
+      title: t(lang, 'rep2.tinyTitle'),
+      detail: t(lang, 'rep2.tinyDetail', { bytes: fmt(facts.codeSize) }),
     });
   }
 
@@ -181,14 +182,12 @@ export function assessCounterparty(
   // — which could simply be a typo in the address.
   const neverUsed = facts.txCount === 0 && facts.balanceWei === 0n;
   if (neverUsed) {
-    reasons.push(`This address has been used ${times(facts.txCount)} and holds nothing.`);
+    reasons.push(t(lang, 'rep2.neverUsedReason', { times: times(facts.txCount, lang) }));
     findings.push({
       id: 'cp-never-used',
       severity: 'caution',
-      title: 'This address has never been used',
-      detail:
-        'It has no history and holds nothing — it may be brand new, or it may be a typo.' +
-        ' Double-check every character, because transactions cannot be undone.',
+      title: t(lang, 'rep2.neverUsedTitle'),
+      detail: t(lang, 'rep2.neverUsedDetail'),
     });
   }
 
@@ -210,31 +209,40 @@ export function assessCounterparty(
     level = 'suspicious';
   } else if (established) {
     level = 'established';
-    reasons.push(`This program has been used ${times(facts.txCount)}.`);
-    reasons.push(
-      `It carries ${fmt(facts.codeSize)} bytes of program code — the size of a real, working app.`,
-    );
+    reasons.push(t(lang, 'rep2.establishedUsed', { times: times(facts.txCount, lang) }));
+    reasons.push(t(lang, 'rep2.establishedCode', { bytes: fmt(facts.codeSize) }));
   } else if (neverUsed) {
     level = 'thin';
   } else {
     level = 'ordinary';
-    const what = facts.isContract ? 'program' : 'address';
-    reasons.push(`This ${what} has been used ${times(facts.txCount)}.`);
+    const what = facts.isContract
+      ? t(lang, 'rep2.whatProgram')
+      : t(lang, 'rep2.whatAddress');
+    reasons.push(
+      t(lang, 'rep2.ordinaryUsed', {
+        what,
+        times: times(facts.txCount, lang),
+      }),
+    );
     if (facts.balanceWei > 0n) {
-      reasons.push(`It currently holds about ${formatAmount(facts.balanceWei, 18)} MON.`);
+      reasons.push(
+        t(lang, 'rep2.ordinaryBalance', {
+          amount: formatAmount(facts.balanceWei, 18),
+        }),
+      );
     }
   }
 
   const label =
     level === 'suspicious'
-      ? 'Looks like a scam pattern'
+      ? t(lang, 'rep2.label.suspicious')
       : level === 'established'
-        ? 'Well-used program'
+        ? t(lang, 'rep2.label.established')
         : level === 'thin'
-          ? 'Never used before'
+          ? t(lang, 'rep2.label.thin')
           : facts.isContract
-            ? 'Ordinary program'
-            : 'Ordinary wallet';
+            ? t(lang, 'rep2.label.ordinaryProgram')
+            : t(lang, 'rep2.label.ordinaryWallet');
 
   // Keep it human: at most 3 sentences, most important first (reasons
   // were pushed in danger-first order above).

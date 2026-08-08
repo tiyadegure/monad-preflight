@@ -1,14 +1,17 @@
 import type { Readiness } from '../lib/score';
+import { t } from '../lib/i18n';
+import type { Lang } from '../lib/i18n';
 
 interface Props {
   readiness: Readiness;
+  lang: Lang;
 }
 
 /**
  * The primary instrument: one number, one word, one sentence. Everything
  * else on the flight plan explains this reading.
  */
-export function ReadinessGauge({ readiness }: Props) {
+export function ReadinessGauge({ readiness, lang }: Props) {
   const { score, band, verdict, advice, counts } = readiness;
   // Circumference of an r=26 circle, used to draw the arc by dash offset.
   const circumference = 2 * Math.PI * 26;
@@ -21,7 +24,10 @@ export function ReadinessGauge({ readiness }: Props) {
       aria-valuenow={score}
       aria-valuemin={0}
       aria-valuemax={100}
-      aria-label={`Flight readiness: ${score} out of 100, ${verdict}`}
+      aria-label={t(lang, 'gauge.aria', {
+        score: String(score),
+        verdict,
+      })}
     >
       <svg viewBox="0 0 64 64" className="gauge-dial" aria-hidden="true">
         <circle className="gauge-track" cx="32" cy="32" r="26" />
@@ -43,12 +49,16 @@ export function ReadinessGauge({ readiness }: Props) {
           <p className="gauge-counts">
             {counts.danger > 0 && (
               <span className="c-danger">
-                {counts.danger} serious {counts.danger === 1 ? 'warning' : 'warnings'}
+                {counts.danger === 1
+                  ? t(lang, 'gauge.seriousOne')
+                  : t(lang, 'gauge.seriousMany', { n: String(counts.danger) })}
               </span>
             )}
             {counts.danger > 0 && counts.caution > 0 && ' · '}
             {counts.caution > 0 && (
-              <span className="c-caution">{counts.caution} to double-check</span>
+              <span className="c-caution">
+                {t(lang, 'gauge.toCheck', { n: String(counts.caution) })}
+              </span>
             )}
           </p>
         )}

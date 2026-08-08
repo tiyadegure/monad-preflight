@@ -1,4 +1,6 @@
 import type { RiskFinding, SimulationResult } from './types';
+import { t } from './i18n';
+import type { Lang } from './i18n';
 
 /**
  * Flight-readiness score: one number and one word for the whole plan.
@@ -37,7 +39,11 @@ const WEIGHTS: Record<RiskFinding['severity'], number> = {
 /** Findings that make the transaction pointless or impossible, not merely risky. */
 const FATAL_IDS = new Set(['simulation-reverted', 'insufficient-balance', 'zero-address']);
 
-export function scorePlan(sim: SimulationResult, risks: RiskFinding[]): Readiness {
+export function scorePlan(
+  sim: SimulationResult,
+  risks: RiskFinding[],
+  lang: Lang = 'en',
+): Readiness {
   const counts = { danger: 0, caution: 0, info: 0 };
   let deduction = 0;
   let fatal = false;
@@ -67,26 +73,25 @@ export function scorePlan(sim: SimulationResult, risks: RiskFinding[]): Readines
     score >= 80 ? 'clear' : score >= 45 ? 'caution' : 'grounded';
 
   const verdict =
-    band === 'clear' ? 'Cleared' : band === 'caution' ? 'Hold' : 'Grounded';
+    band === 'clear'
+      ? t(lang, 'score.verdict.clear')
+      : band === 'caution'
+        ? t(lang, 'score.verdict.caution')
+        : t(lang, 'score.verdict.grounded');
 
   let advice: string;
   if (!sim.ok) {
-    advice =
-      'This transaction would fail if you sent it. Signing it would only cost you the network fee.';
+    advice = t(lang, 'score.advice.fail');
   } else if (degraded) {
-    advice =
-      'We could only run a shallow check on this one, so we cannot tell you what it moves. ' +
-      'Treat this score as "unknown", not as approval.';
+    advice = t(lang, 'score.advice.degraded');
   } else if (band === 'grounded') {
-    advice =
-      'Serious problems found. Read the warnings below before you decide — this is the kind of transaction people regret.';
+    advice = t(lang, 'score.advice.grounded');
   } else if (band === 'caution') {
-    advice =
-      'Nothing is clearly broken, but something here deserves a second look before you sign.';
+    advice = t(lang, 'score.advice.caution');
   } else if (counts.info > 0) {
-    advice = 'Everything checks out. A couple of small notes are listed below.';
+    advice = t(lang, 'score.advice.info');
   } else {
-    advice = 'Everything checks out — this does what you asked, and nothing more.';
+    advice = t(lang, 'score.advice.clear');
   }
 
   return { score, band, verdict, advice, counts };

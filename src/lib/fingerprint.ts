@@ -12,6 +12,8 @@
 import { getAddress } from 'viem';
 import type { Address, Hex } from './types';
 import { shortAddress } from './format';
+import { t } from './i18n';
+import type { Lang } from './i18n';
 
 /* ------------------------------------------------------------------ */
 /* Public types                                                        */
@@ -198,76 +200,75 @@ async function readImplementationSlot(
 /* Fingerprint builders                                                */
 /* ------------------------------------------------------------------ */
 
-function eoaFingerprint(): Fingerprint {
+function eoaFingerprint(lang: Lang): Fingerprint {
   return {
     kind: 'eoa',
-    label: 'Personal wallet',
-    detail:
-      'This address is a personal wallet, not a program. Whoever holds its key controls it and everything it owns.',
+    label: t(lang, 'fp.eoaLabel'),
+    detail: t(lang, 'fp.eoaDetail'),
     selectors: [],
   };
 }
 
-function minimalProxyFingerprint(implementation: Address, selectors: string[]): Fingerprint {
+function minimalProxyFingerprint(
+  implementation: Address,
+  selectors: string[],
+  lang: Lang,
+): Fingerprint {
   return {
     kind: 'minimal-proxy',
-    label: 'Tiny forwarder to another program',
-    detail:
-      `This address holds almost no code of its own — the real code lives at another address, ${shortAddress(implementation)}, and everything you send here is forwarded there.` +
-      ' That target is baked in and cannot be changed later.',
+    label: t(lang, 'fp.minimalLabel'),
+    detail: t(lang, 'fp.minimalDetail', { address: shortAddress(implementation) }),
     implementation,
     selectors,
   };
 }
 
-function proxyFingerprint(implementation: Address, selectors: string[]): Fingerprint {
+function proxyFingerprint(
+  implementation: Address,
+  selectors: string[],
+  lang: Lang,
+): Fingerprint {
   return {
     kind: 'proxy',
-    label: 'Front for another program',
-    detail:
-      `This address is only a front: the real code lives at another address, ${shortAddress(implementation)}.` +
-      ' Whoever controls this front can swap that code for something different at any time, so what it does today is not guaranteed tomorrow.',
+    label: t(lang, 'fp.proxyLabel'),
+    detail: t(lang, 'fp.proxyDetail', { address: shortAddress(implementation) }),
     implementation,
     selectors,
   };
 }
 
-function erc721Fingerprint(selectors: string[]): Fingerprint {
+function erc721Fingerprint(selectors: string[], lang: Lang): Fingerprint {
   return {
     kind: 'erc721',
-    label: 'Collectible tokens (NFTs)',
-    detail:
-      'This program manages unique collectible items — each one is different and belongs to exactly one owner at a time.',
+    label: t(lang, 'fp.erc721Label'),
+    detail: t(lang, 'fp.erc721Detail'),
     selectors,
   };
 }
 
-function erc20Fingerprint(selectors: string[]): Fingerprint {
+function erc20Fingerprint(selectors: string[], lang: Lang): Fingerprint {
   return {
     kind: 'erc20',
-    label: 'Token',
-    detail:
-      'This program is a regular token: it keeps a balance for every wallet and moves those balances when their owners ask.',
+    label: t(lang, 'fp.erc20Label'),
+    detail: t(lang, 'fp.erc20Detail'),
     selectors,
   };
 }
 
-function multisigFingerprint(selectors: string[]): Fingerprint {
+function multisigFingerprint(selectors: string[], lang: Lang): Fingerprint {
   return {
     kind: 'multisig-or-wallet',
-    label: 'Shared or smart wallet',
-    detail:
-      'This looks like a wallet that is itself a program — often one shared by several people, where funds only move once enough of them agree.',
+    label: t(lang, 'fp.multisigLabel'),
+    detail: t(lang, 'fp.multisigDetail'),
     selectors,
   };
 }
 
-function unknownFingerprint(selectors: string[]): Fingerprint {
+function unknownFingerprint(selectors: string[], lang: Lang): Fingerprint {
   return {
     kind: 'unknown-contract',
-    label: 'Program (purpose unknown)',
-    detail:
-      'PreFlight could not recognise what this program does, so do not rely on its name or address alone — rely on what the simulation shows you.',
+    label: t(lang, 'fp.unknownLabel'),
+    detail: t(lang, 'fp.unknownDetail'),
     selectors,
   };
 }
@@ -279,33 +280,34 @@ function unknownFingerprint(selectors: string[]): Fingerprint {
 export async function fingerprintAddress(
   reader: FingerprintReader,
   address: Address,
+  lang: Lang = 'en',
 ): Promise<Fingerprint> {
   const code = (await reader.getCode(address)) ?? '';
   const body = stripHexPrefix(code);
 
   // No code at all: a personal wallet, not a program.
-  if (body.length === 0) return eoaFingerprint();
+  if (body.length === 0) return eoaFingerprint(lang);
 
   const selectors = detectSelectors(code);
 
   // Exact-pattern clone check first — it needs no storage reads.
   const cloneTarget = parseMinimalProxy(body);
-  if (cloneTarget !== null) return minimalProxyFingerprint(cloneTarget, selectors);
+  if (cloneTarget !== null) return minimalProxyFingerprint(cloneTarget, selectors, lang);
 
   // EIP-1967 slot, then the legacy OpenZeppelin slot. Read failures are
   // non-fatal: they simply mean "not a proxy via that slot".
   const implementation =
     (await readImplementationSlot(reader, address, EIP1967_IMPLEMENTATION_SLOT)) ??
     (await readImplementationSlot(reader, address, LEGACY_IMPLEMENTATION_SLOT));
-  if (implementation !== null) return proxyFingerprint(implementation, selectors);
+  if (implementation !== null) return proxyFingerprint(implementation, selectors, lang);
 
   // Interface guesses from the selectors the dispatcher exposes.
   const has = (selector: string): boolean => selectors.includes(selector);
-  if (has(SEL_OWNER_OF) || has(SEL_SAFE_TRANSFER_FROM)) return erc721Fingerprint(selectors);
-  if (has(SEL_TRANSFER) && has(SEL_BALANCE_OF)) return erc20Fingerprint(selectors);
+  if (has(SEL_OWNER_OF) || has(SEL_SAFE_TRANSFER_FROM)) return erc721Fingerprint(selectors, lang);
+  if (has(SEL_TRANSFER) && has(SEL_BALANCE_OF)) return erc20Fingerprint(selectors, lang);
   if (has(SEL_EXEC_TRANSACTION) || has(SEL_IS_VALID_SIGNATURE)) {
-    return multisigFingerprint(selectors);
+    return multisigFingerprint(selectors, lang);
   }
 
-  return unknownFingerprint(selectors);
+  return unknownFingerprint(selectors, lang);
 }

@@ -12,6 +12,8 @@
  */
 
 import { shortAddress } from './format';
+import { t } from './i18n';
+import type { Lang } from './i18n';
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -56,59 +58,48 @@ const SEVERITY_RANK: Record<CheckStatus, number> = {
   pass: 0,
 };
 
-const HEADLINES: Record<CheckStatus, string> = {
-  fail: 'Your wallet needs attention now.',
-  unknown: 'We could not check everything — do not treat this as a clean bill of health.',
-  warn: 'Mostly fine, with a couple of things worth cleaning up.',
-  pass: 'Everything we can check looks healthy.',
-};
-
 /* ------------------------------------------------------------------ */
 /* Individual checks                                                   */
 /* ------------------------------------------------------------------ */
 
-function checkDelegation(input: HealthInput): HealthCheck {
-  const label = 'Wallet takeover';
+function checkDelegation(input: HealthInput, lang: Lang): HealthCheck {
+  const label = t(lang, 'wh.label.delegation');
   if (input.delegated === null) {
     return {
       id: 'delegation',
       label,
       status: 'unknown',
-      detail: 'We could not read whether your wallet is running installed code.',
+      detail: t(lang, 'wh.delegationUnknown'),
     };
   }
   if (input.delegated.delegated) {
     const where = input.delegated.implementation
-      ? ` at ${shortAddress(input.delegated.implementation)}`
+      ? t(lang, 'wh.delegationAt', { address: shortAddress(input.delegated.implementation) })
       : '';
     return {
       id: 'delegation',
       label,
       status: 'fail',
-      detail:
-        `A program${where} is installed on your wallet and can act as you.` +
-        ' If you did not set this up yourself, remove it before doing anything else.',
+      detail: t(lang, 'wh.delegationFail', { where }),
     };
   }
   return {
     id: 'delegation',
     label,
     status: 'pass',
-    detail: 'Your wallet is a normal wallet — no program is running as you.',
+    detail: t(lang, 'wh.delegationPass'),
   };
 }
 
-function checkUnlimitedApprovals(input: HealthInput): HealthCheck {
-  const label = 'Unlimited spending permissions';
+function checkUnlimitedApprovals(input: HealthInput, lang: Lang): HealthCheck {
+  const label = t(lang, 'wh.label.unlimited');
   const count = input.unlimitedApprovals;
   if (count === null || !input.scanComplete) {
     return {
       id: 'unlimited-approvals',
       label,
       status: 'unknown',
-      detail:
-        'Our scan could not see everything, so we cannot say how many unlimited' +
-        ' spending permissions you have. Do not treat this as a clean bill of health.',
+      detail: t(lang, 'wh.unlimitedUnknown'),
     };
   }
   if (count === 0) {
@@ -116,7 +107,7 @@ function checkUnlimitedApprovals(input: HealthInput): HealthCheck {
       id: 'unlimited-approvals',
       label,
       status: 'pass',
-      detail: 'You have no unlimited spending permissions — nothing can drain a whole token from your wallet.',
+      detail: t(lang, 'wh.unlimitedPass'),
     };
   }
   if (count <= 2) {
@@ -124,30 +115,29 @@ function checkUnlimitedApprovals(input: HealthInput): HealthCheck {
       id: 'unlimited-approvals',
       label,
       status: 'warn',
-      detail:
-        `You have ${count === 1 ? '1 unlimited spending permission' : '2 unlimited spending permissions'}.` +
-        ' Each one lets someone move all of that token out of your wallet at any time — cancel the ones you no longer use.',
+      detail: t(
+        lang,
+        count === 1 ? 'wh.unlimitedWarnOne' : 'wh.unlimitedWarnTwo',
+      ),
     };
   }
   return {
     id: 'unlimited-approvals',
     label,
     status: 'fail',
-    detail:
-      `You have ${count} unlimited spending permissions.` +
-      ' Each one lets someone move all of that token out of your wallet at any time — cancel the ones you no longer use.',
+    detail: t(lang, 'wh.unlimitedFail', { count: String(count) }),
   };
 }
 
-function checkExposure(input: HealthInput): HealthCheck {
-  const label = 'Funds others can take';
+function checkExposure(input: HealthInput, lang: Lang): HealthCheck {
+  const label = t(lang, 'wh.label.exposure');
   const count = input.exposedTokenCount;
   if (count === null) {
     return {
       id: 'exposure',
       label,
       status: 'unknown',
-      detail: 'We could not work out which of your tokens others currently have permission to take.',
+      detail: t(lang, 'wh.exposureUnknown'),
     };
   }
   if (count === 0) {
@@ -155,29 +145,30 @@ function checkExposure(input: HealthInput): HealthCheck {
       id: 'exposure',
       label,
       status: 'pass',
-      detail: 'None of the tokens you hold can currently be taken by someone else.',
+      detail: t(lang, 'wh.exposurePass'),
     };
   }
   return {
     id: 'exposure',
     label,
     status: 'warn',
-    detail:
-      `${count === 1 ? '1 token' : `${count} tokens`} in your wallet ` +
-      `${count === 1 ? 'is' : 'are'} covered by a permission someone else holds — they could take ` +
-      `${count === 1 ? 'it' : 'them'} without asking you again.`,
+    detail: t(
+      lang,
+      count === 1 ? 'wh.exposureWarnOne' : 'wh.exposureWarnMany',
+      { count: String(count) },
+    ),
   };
 }
 
-function checkFunds(input: HealthInput): HealthCheck {
-  const label = 'Gas for getting out';
+function checkFunds(input: HealthInput, lang: Lang): HealthCheck {
+  const label = t(lang, 'wh.label.funds');
   const balance = input.nativeBalanceWei;
   if (balance === null) {
     return {
       id: 'funds',
       label,
       status: 'unknown',
-      detail: 'We could not read how much MON your wallet holds.',
+      detail: t(lang, 'wh.fundsUnknown'),
     };
   }
   if (balance === 0n) {
@@ -185,16 +176,14 @@ function checkFunds(input: HealthInput): HealthCheck {
       id: 'funds',
       label,
       status: 'warn',
-      detail:
-        'Your wallet holds no MON. Every action costs a small network fee,' +
-        ' so right now you could not even cancel a permission — you cannot get out without a little MON for the fee.',
+      detail: t(lang, 'wh.fundsWarn'),
     };
   }
   return {
     id: 'funds',
     label,
     status: 'pass',
-    detail: 'Your wallet holds MON, so you can pay the network fee to act — including cancelling a permission — if you ever need to.',
+    detail: t(lang, 'wh.fundsPass'),
   };
 }
 
@@ -202,12 +191,12 @@ function checkFunds(input: HealthInput): HealthCheck {
 /* Main entry point                                                    */
 /* ------------------------------------------------------------------ */
 
-export function assessWalletHealth(input: HealthInput): HealthReport {
+export function assessWalletHealth(input: HealthInput, lang: Lang = 'en'): HealthReport {
   const checks: HealthCheck[] = [
-    checkDelegation(input),
-    checkUnlimitedApprovals(input),
-    checkExposure(input),
-    checkFunds(input),
+    checkDelegation(input, lang),
+    checkUnlimitedApprovals(input, lang),
+    checkExposure(input, lang),
+    checkFunds(input, lang),
   ];
 
   let worst: CheckStatus = 'pass';
@@ -217,5 +206,5 @@ export function assessWalletHealth(input: HealthInput): HealthReport {
     }
   }
 
-  return { checks, headline: HEADLINES[worst], worst };
+  return { checks, headline: t(lang, `wh.headline.${worst}` as const), worst };
 }

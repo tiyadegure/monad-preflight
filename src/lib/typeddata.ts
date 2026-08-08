@@ -12,6 +12,8 @@
 
 import type { RiskFinding } from './types';
 import { UNLIMITED_THRESHOLD } from './format';
+import { t } from './i18n';
+import type { Lang } from './i18n';
 
 /* ------------------------------------------------------------------ */
 /* Public types                                                        */
@@ -38,15 +40,9 @@ const THIRTY_DAYS_SEC = 30n * 24n * 60n * 60n;
 /** 9999-12-31T23:59:59Z — past this, a date is "never expires" territory. */
 const FAR_FUTURE_SEC = 253_402_300_799n;
 
-const PERMIT_HEADLINE = 'This signature is a token approval — no transaction needed';
-const PERMIT2_HEADLINE = 'This signature is a token approval through Permit2 — no transaction needed';
-const GENERIC_HEADLINE = 'You are being asked to sign structured data';
-
-const NOT_TYPED_DATA_ERROR =
-  "This does not look like a signature request. A signature request has 'types' and 'message' sections, plus a 'domain' or 'primaryType'.";
-
-const AMOUNT_CAVEAT =
-  "raw token units — a signature request does not carry the token's decimals, so we cannot show this as an everyday amount";
+const PERMIT_HEADLINE_KEY = 'td.permitHeadline';
+const PERMIT2_HEADLINE_KEY = 'td.permit2Headline';
+const GENERIC_HEADLINE_KEY = 'td.genericHeadline';
 
 /* ------------------------------------------------------------------ */
 /* Small helpers                                                       */
@@ -91,41 +87,41 @@ function truncate(s: string, max: number): string {
   return s.length > max ? `${s.slice(0, max)}…` : s;
 }
 
-function formatUnixSeconds(sec: bigint): string {
-  if (sec < 0n) return 'an unreadable date';
-  if (sec > FAR_FUTURE_SEC) return 'a date so far away it never really expires';
+function formatUnixSeconds(sec: bigint, lang: Lang): string {
+  if (sec < 0n) return t(lang, 'td.unreadableDate');
+  if (sec > FAR_FUTURE_SEC) return t(lang, 'td.neverExpires');
   return new Date(Number(sec) * 1000).toUTCString();
 }
 
-function describeAmount(amount: bigint, unlimited: boolean): string {
-  if (unlimited) return 'unlimited — there is no cap on how much can be taken';
-  return `${amount.toString()} ${AMOUNT_CAVEAT}`;
+function describeAmount(amount: bigint, unlimited: boolean, lang: Lang): string {
+  if (unlimited) return t(lang, 'td.amountUnlimited');
+  return t(lang, 'td.amountCapped', {
+    amount: amount.toString(),
+    caveat: t(lang, 'td.amountCaveat'),
+  });
 }
 
 /* ------------------------------------------------------------------ */
 /* Risk builders                                                       */
 /* ------------------------------------------------------------------ */
 
-function unlimitedRisk(spender: string): RiskFinding {
+function unlimitedRisk(spender: string, lang: Lang): RiskFinding {
   return {
     id: 'unlimited-permit',
     severity: 'danger',
-    title: 'Unlimited spending approval',
-    detail:
-      `Signing hands unlimited spending of this token to ${spender}. ` +
-      'It happens silently and costs them nothing — they could take your entire balance at any time.',
+    title: t(lang, 'td.unlimitedRiskTitle'),
+    detail: t(lang, 'td.unlimitedRiskDetail', { spender }),
   };
 }
 
-function deadlineRisks(deadlineSec: bigint, nowSec: bigint): RiskFinding[] {
+function deadlineRisks(deadlineSec: bigint, nowSec: bigint, lang: Lang): RiskFinding[] {
   if (deadlineSec < nowSec) {
     return [
       {
         id: 'expired-permit',
         severity: 'info',
-        title: 'This request has already expired',
-        detail:
-          'The deadline in this request is in the past, so signing it should have no effect — contracts reject expired signatures.',
+        title: t(lang, 'td.expiredTitle'),
+        detail: t(lang, 'td.expiredDetail'),
       },
     ];
   }
@@ -134,33 +130,31 @@ function deadlineRisks(deadlineSec: bigint, nowSec: bigint): RiskFinding[] {
       {
         id: 'long-deadline',
         severity: 'caution',
-        title: 'Usable for a very long time',
-        detail:
-          `This approval stays usable for more than 30 days (until ${formatUnixSeconds(deadlineSec)}). ` +
-          'Whoever holds the signature can use it at any moment before then, long after you may have forgotten about it.',
+        title: t(lang, 'td.longDeadlineTitle'),
+        detail: t(lang, 'td.longDeadlineDetail', {
+          date: formatUnixSeconds(deadlineSec, lang),
+        }),
       },
     ];
   }
   return [];
 }
 
-function differentNetworkRisk(): RiskFinding {
+function differentNetworkRisk(lang: Lang): RiskFinding {
   return {
     id: 'different-network',
     severity: 'caution',
-    title: 'Meant for a different network',
-    detail:
-      'This signature is for a different network than the one you have selected. Make sure the app is asking for the network you expect.',
+    title: t(lang, 'td.networkTitle'),
+    detail: t(lang, 'td.networkDetail'),
   };
 }
 
-function signatureCanMoveFundsRisk(): RiskFinding {
+function signatureCanMoveFundsRisk(lang: Lang): RiskFinding {
   return {
     id: 'signature-can-move-funds',
     severity: 'caution',
-    title: 'Signatures can move funds',
-    detail:
-      'Some signatures authorize moving funds without any transaction. Only sign if you trust the app that asked for this.',
+    title: t(lang, 'td.signatureMovesTitle'),
+    detail: t(lang, 'td.signatureMovesDetail'),
   };
 }
 
@@ -201,42 +195,45 @@ function explainPermit(
   domain: TypedDataExplanation['domain'],
   risks: RiskFinding[],
   nowSec: bigint,
+  lang: Lang,
 ): TypedDataExplanation | { error: string } {
   const spender = stringifyValue(message.spender);
   const amount = asBigInt(message.value);
   if (amount === null) {
-    return { error: 'We could not read the amount in this approval request, so we cannot explain it safely.' };
+    return { error: t(lang, 'td.cantReadAmount') };
   }
   const deadline = asBigInt(message.deadline);
   if (deadline === null) {
-    return { error: 'We could not read the deadline in this approval request, so we cannot explain it safely.' };
+    return { error: t(lang, 'td.cantReadDeadline') };
   }
 
   const unlimited = amount >= UNLIMITED_THRESHOLD;
-  if (unlimited) risks.push(unlimitedRisk(spender));
-  risks.push(...deadlineRisks(deadline, nowSec));
+  if (unlimited) risks.push(unlimitedRisk(spender, lang));
+  risks.push(...deadlineRisks(deadline, nowSec, lang));
 
   const bullets = [
-    `Who can spend: ${spender}`,
-    `How much: ${describeAmount(amount, unlimited)}`,
+    t(lang, 'td.whoCanSpend', { spender }),
+    t(lang, 'td.howMuch', { amount: describeAmount(amount, unlimited, lang) }),
     // The deadline bounds when the SIGNATURE can be redeemed — it does not
     // bound the permission it creates. Once redeemed, the spending
     // permission sits on the token forever until revoked. Saying "valid
     // until" alone would leave people thinking it expires on its own.
-    `Signature must be used by: ${formatUnixSeconds(deadline)}`,
-    'Important: that date limits when this signature can be used — not how long ' +
-      'the permission lasts. Once used, the permission stays open until you revoke it.',
+    t(lang, 'td.useBy', { date: formatUnixSeconds(deadline, lang) }),
+    t(lang, 'td.deadlineClarify'),
   ];
-  if (domain.verifyingContract) bullets.push(`Token contract: ${domain.verifyingContract}`);
+  if (domain.verifyingContract) {
+    bullets.push(t(lang, 'td.tokenContract', { address: domain.verifyingContract }));
+  }
 
   return {
     kind: 'permit',
-    headline: PERMIT_HEADLINE,
-    outcome:
-      `If you sign, ${spender} becomes allowed to take ${unlimited ? 'any amount' : 'up to the stated amount'} ` +
-      'of this token from your wallet. Signing is free and moves nothing right now — the effect kicks in ' +
-      'whenever the spender chooses to use your signature, and the permission it creates does not expire ' +
-      'on its own.',
+    headline: t(lang, PERMIT_HEADLINE_KEY),
+    outcome: t(lang, 'td.permitOutcome', {
+      spender,
+      anyAmount: unlimited
+        ? t(lang, 'td.anyAmount')
+        : t(lang, 'td.statedAmount'),
+    }),
     bullets,
     risks,
     domain,
@@ -250,16 +247,16 @@ interface Permit2Item {
   expiration?: bigint;
 }
 
-function parsePermit2Item(raw: Rec, label: string): Permit2Item | { error: string } {
+function parsePermit2Item(raw: Rec, label: string, lang: Lang): Permit2Item | { error: string } {
   const amount = asBigInt(raw.amount);
   if (amount === null) {
-    return { error: `We could not read the amount for ${label} in this request, so we cannot explain it safely.` };
+    return { error: t(lang, 'td.cantReadAmountLabel', { label }) };
   }
   let expiration: bigint | undefined;
   if (raw.expiration !== undefined && raw.expiration !== null) {
     const parsed = asBigInt(raw.expiration);
     if (parsed === null) {
-      return { error: `We could not read the expiry date for ${label} in this request, so we cannot explain it safely.` };
+      return { error: t(lang, 'td.cantReadExpiryLabel', { label }) };
     }
     expiration = parsed;
   }
@@ -277,6 +274,7 @@ function explainPermit2(
   risks: RiskFinding[],
   nowSec: bigint,
   batch: boolean,
+  lang: Lang,
 ): TypedDataExplanation | { error: string } {
   const spender = 'spender' in message ? stringifyValue(message.spender) : undefined;
 
@@ -284,7 +282,7 @@ function explainPermit2(
   if (message.sigDeadline !== undefined && message.sigDeadline !== null) {
     const parsed = asBigInt(message.sigDeadline);
     if (parsed === null) {
-      return { error: 'We could not read the signing deadline in this request, so we cannot explain it safely.' };
+      return { error: t(lang, 'td.cantReadSigningDeadline') };
     }
     sigDeadline = parsed;
   }
@@ -295,25 +293,25 @@ function explainPermit2(
     for (let i = 0; i < rawItems.length; i += 1) {
       const raw = rawItems[i];
       if (!isRecord(raw)) {
-        return { error: `We could not read token ${i + 1} in this request, so we cannot explain it safely.` };
+        return { error: t(lang, 'td.cantReadTokenN', { n: i + 1 }) };
       }
-      const item = parsePermit2Item(raw, `token ${i + 1}`);
+      const item = parsePermit2Item(raw, t(lang, 'td.tokenNLabel', { n: i + 1 }), lang);
       if ('error' in item) return item;
       items.push(item);
     }
   } else {
-    const item = parsePermit2Item(message.details as Rec, 'the token');
+    const item = parsePermit2Item(message.details as Rec, t(lang, 'td.theToken'), lang);
     if ('error' in item) return item;
     items.push(item);
   }
 
-  const spenderLabel = spender ?? 'the spender named in this request';
+  const spenderLabel = spender ?? t(lang, 'td.spenderNamed');
   if (items.some((item) => item.unlimited)) {
-    risks.push(unlimitedRisk(spenderLabel));
+    risks.push(unlimitedRisk(spenderLabel, lang));
   }
   for (const item of items) {
     if (item.expiration !== undefined) {
-      const found = deadlineRisks(item.expiration, nowSec);
+      const found = deadlineRisks(item.expiration, nowSec, lang);
       // One deadline warning per id is enough, even across several tokens.
       for (const risk of found) {
         if (!risks.some((existing) => existing.id === risk.id)) risks.push(risk);
@@ -325,33 +323,46 @@ function explainPermit2(
   if (batch) {
     for (let i = 0; i < items.length; i += 1) {
       const item = items[i];
-      bullets.push(`Token ${i + 1}: ${item.token}`);
-      bullets.push(`Token ${i + 1} amount: ${describeAmount(item.amount, item.unlimited)}`);
+      bullets.push(t(lang, 'td.tokenN', { n: i + 1, token: item.token }));
+      bullets.push(
+        t(lang, 'td.tokenNAmount', {
+          n: i + 1,
+          amount: describeAmount(item.amount, item.unlimited, lang),
+        }),
+      );
       if (item.expiration !== undefined) {
-        bullets.push(`Token ${i + 1} approval lasts until: ${formatUnixSeconds(item.expiration)}`);
+        bullets.push(
+          t(lang, 'td.tokenNUntil', {
+            n: i + 1,
+            date: formatUnixSeconds(item.expiration, lang),
+          }),
+        );
       }
     }
   } else {
     const item = items[0];
-    bullets.push(`Token: ${item.token}`);
-    bullets.push(`How much: ${describeAmount(item.amount, item.unlimited)}`);
+    bullets.push(t(lang, 'td.token', { token: item.token }));
+    bullets.push(
+      t(lang, 'td.howMuch', { amount: describeAmount(item.amount, item.unlimited, lang) }),
+    );
     if (item.expiration !== undefined) {
-      bullets.push(`Approval lasts until: ${formatUnixSeconds(item.expiration)}`);
+      bullets.push(
+        t(lang, 'td.approvalUntil', { date: formatUnixSeconds(item.expiration, lang) }),
+      );
     }
   }
-  if (spender !== undefined) bullets.push(`Who can spend: ${spender}`);
+  if (spender !== undefined) bullets.push(t(lang, 'td.whoCanSpend', { spender }));
   if (sigDeadline !== undefined) {
-    bullets.push(`Signature must be used by: ${formatUnixSeconds(sigDeadline)}`);
+    bullets.push(t(lang, 'td.useBy', { date: formatUnixSeconds(sigDeadline, lang) }));
   }
 
-  const what = batch ? `${items.length} tokens` : 'this token';
+  const what = batch
+    ? t(lang, 'td.nTokens', { n: items.length })
+    : t(lang, 'td.thisToken');
   return {
     kind: batch ? 'permit2-batch' : 'permit2-single',
-    headline: PERMIT2_HEADLINE,
-    outcome:
-      `If you sign, ${spenderLabel} becomes allowed to take ${what} from your wallet through the Permit2 system ` +
-      'until the expiry date. Signing is free and moves nothing right now — the effect kicks in whenever ' +
-      'the spender chooses to use your signature.',
+    headline: t(lang, PERMIT2_HEADLINE_KEY),
+    outcome: t(lang, 'td.permit2Outcome', { spender: spenderLabel, what }),
     bullets,
     risks,
     domain,
@@ -366,13 +377,14 @@ function explainGeneric(
   domain: TypedDataExplanation['domain'],
   risks: RiskFinding[],
   primaryType: string | undefined,
+  lang: Lang,
   declaredFields: string[] | null = null,
 ): TypedDataExplanation {
   const bullets: string[] = [];
-  if (primaryType) bullets.push(`Type of data: ${primaryType}`);
-  if (domain.name) bullets.push(`App or contract name: ${domain.name}`);
+  if (primaryType) bullets.push(t(lang, 'td.typeOfData', { type: primaryType }));
+  if (domain.name) bullets.push(t(lang, 'td.appName', { name: domain.name }));
   if (domain.verifyingContract) {
-    bullets.push(`Contract that will check this signature: ${domain.verifyingContract}`);
+    bullets.push(t(lang, 'td.checkContract', { address: domain.verifyingContract }));
   }
 
   const entries = Object.entries(message);
@@ -381,7 +393,7 @@ function explainGeneric(
     // read as part of the deal.
     const ignored =
       declaredFields !== null && !declaredFields.includes(key)
-        ? ' — your wallet will NOT sign this field'
+        ? t(lang, 'td.notSignedField')
         : '';
     bullets.push(`${key}: ${truncate(stringifyValue(value), 60)}${ignored}`);
   }
@@ -389,21 +401,18 @@ function explainGeneric(
   const hidden = entries.length - MAX_SHOWN_FIELDS;
   if (hidden > 0) {
     bullets.push(
-      `…and ${hidden} more field${hidden === 1 ? '' : 's'} not shown here. ` +
-        'Because we cannot show you all of it, treat this request as unreviewed.',
+      t(lang, hidden === 1 ? 'td.hiddenOne' : 'td.hiddenMany', { count: hidden }),
     );
   }
 
-  risks.push(signatureCanMoveFundsRisk());
+  risks.push(signatureCanMoveFundsRisk(lang));
 
   return {
     kind: 'generic',
-    headline: GENERIC_HEADLINE,
-    outcome:
-      'We could not match this request to a known pattern, so we cannot say exactly what signing it will do. ' +
-      (hidden > 0
-        ? 'It also has more fields than we can display. '
-        : 'Read every field below and make sure it matches what the app told you before you sign.'),
+    headline: t(lang, GENERIC_HEADLINE_KEY),
+    outcome: t(lang, 'td.genericOutcome', {
+      more: hidden > 0 ? t(lang, 'td.genericMore') : t(lang, 'td.genericReadAll'),
+    }),
     bullets,
     risks,
     domain,
@@ -433,8 +442,9 @@ function declaredFieldNames(types: unknown, primaryType: string | undefined): st
 
 export function explainTypedData(
   value: unknown,
-  opts?: { expectedChainIds?: number[]; nowMs?: number },
+  opts?: { expectedChainIds?: number[]; nowMs?: number; lang?: Lang },
 ): TypedDataExplanation | { error: string } {
+  const lang: Lang = opts?.lang ?? 'en';
   try {
     let candidate: unknown = value;
     if (typeof candidate === 'string') {
@@ -442,12 +452,12 @@ export function explainTypedData(
         candidate = JSON.parse(candidate);
       } catch {
         return {
-          error: 'We could not read this text as a signature request — it is not valid JSON.',
+          error: t(lang, 'td.notJson'),
         };
       }
     }
     if (!looksLikeTypedData(candidate)) {
-      return { error: NOT_TYPED_DATA_ERROR };
+      return { error: t(lang, 'td.notTypedData') };
     }
 
     const data = candidate as Rec;
@@ -484,12 +494,16 @@ export function explainTypedData(
       risks.push({
         id: 'undeclared-fields',
         severity: 'danger',
-        title: 'This request contains hidden extra fields',
+        title: t(lang, 'td.undeclaredTitle'),
         detail:
-          `The request shows ${undeclared.length} extra field${undeclared.length === 1 ? '' : 's'} ` +
-          `(${undeclared.slice(0, 4).join(', ')}) that your wallet will NOT sign. ` +
-          'Honest apps do not do this. It is a known trick for showing you one thing ' +
-          'and having you sign another — do not sign this.',
+          undeclared.length === 1
+            ? t(lang, 'td.undeclaredOne', {
+                names: undeclared.slice(0, 4).join(', '),
+              })
+            : t(lang, 'td.undeclaredMany', {
+                count: undeclared.length,
+                names: undeclared.slice(0, 4).join(', '),
+              }),
       });
     }
 
@@ -505,7 +519,7 @@ export function explainTypedData(
     if (chainIdPresent && expected !== undefined && expected.length > 0) {
       const actual = asBigInt(rawDomain.chainId);
       const matches = actual !== null && expected.some((id) => BigInt(id) === actual);
-      if (!matches) risks.push(differentNetworkRisk());
+      if (!matches) risks.push(differentNetworkRisk(lang));
     }
 
     // ERC-2612 Permit — only when the declared type really is that permit.
@@ -518,7 +532,7 @@ export function explainTypedData(
       declares('owner', 'spender', 'value', 'deadline') &&
       undeclared.length === 0
     ) {
-      return explainPermit(message, domain, risks, nowSec);
+      return explainPermit(message, domain, risks, nowSec, lang);
     }
 
     // Permit2 (single or batch)
@@ -526,10 +540,10 @@ export function explainTypedData(
       domain.name === 'Permit2' || primaryType === 'PermitSingle' || primaryType === 'PermitBatch';
     if (isPermit2 && undeclared.length === 0 && declares('details')) {
       if (Array.isArray(message.details)) {
-        return explainPermit2(message, domain, risks, nowSec, true);
+        return explainPermit2(message, domain, risks, nowSec, true, lang);
       }
       if (isRecord(message.details)) {
-        return explainPermit2(message, domain, risks, nowSec, false);
+        return explainPermit2(message, domain, risks, nowSec, false, lang);
       }
       // Claims to be Permit2 but has no recognizable details — explain generically.
     }
@@ -537,10 +551,10 @@ export function explainTypedData(
     // Generic path: shows every field, and never claims to know the shape.
     // Anything that failed the checks above lands here deliberately — a
     // request we cannot vouch for must show more, not less.
-    return explainGeneric(message, domain, risks, primaryType, declaredFields);
+    return explainGeneric(message, domain, risks, primaryType, lang, declaredFields);
   } catch {
     return {
-      error: 'Something in this signature request could not be read, so we cannot explain it safely.',
+      error: t(lang, 'td.unreadable'),
     };
   }
 }

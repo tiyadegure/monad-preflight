@@ -53,10 +53,10 @@ export function FlightPlan({
   const delay = () => ({ animationDelay: `${seq++ * 80}ms` });
 
   return (
-    <section className="panel" aria-label="Flight plan">
+    <section className="panel" aria-label={t(lang, 'plan.label')}>
       <p className="panel-label">{t(lang, 'plan.label')}</p>
 
-      <ReadinessGauge readiness={readiness} />
+      <ReadinessGauge readiness={readiness} lang={lang} />
 
       <h2 className="plan-summary">{explanation.headline}</h2>
       <p className="plan-outcome">{explanation.outcome}</p>
@@ -122,6 +122,7 @@ export function FlightPlan({
           drift={drift}
           onReview={onDismissDrift}
           onSignAnyway={onSignAnyway}
+          lang={lang}
         />
       )}
 

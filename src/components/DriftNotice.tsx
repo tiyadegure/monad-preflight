@@ -1,9 +1,12 @@
 import type { DriftReport } from '../lib/drift';
+import { t } from '../lib/i18n';
+import type { Lang } from '../lib/i18n';
 
 interface Props {
   drift: DriftReport;
   onReview: () => void;
   onSignAnyway: () => void;
+  lang: Lang;
 }
 
 /**
@@ -11,7 +14,7 @@ interface Props {
  * user was reading. Material drift blocks the signature until the user
  * consciously chooses; cosmetic drift is informational only.
  */
-export function DriftNotice({ drift, onReview, onSignAnyway }: Props) {
+export function DriftNotice({ drift, onReview, onSignAnyway, lang }: Props) {
   if (drift.level === 'none') return null;
   const material = drift.level === 'material';
 
@@ -30,15 +33,15 @@ export function DriftNotice({ drift, onReview, onSignAnyway }: Props) {
           </p>
         ))}
         <p className="a-detail">
-          The plan you read was {drift.staleSeconds} seconds old.
+          {t(lang, 'driftn.staleSeconds', { seconds: String(drift.staleSeconds) })}
         </p>
         {material && (
           <div className="sign-bar" style={{ marginTop: 10 }}>
             <button className="btn-primary" onClick={onReview}>
-              Show me the new plan
+              {t(lang, 'driftn.showNew')}
             </button>
             <button className="btn-ghost" onClick={onSignAnyway}>
-              Sign the original anyway
+              {t(lang, 'driftn.signAnyway')}
             </button>
           </div>
         )}

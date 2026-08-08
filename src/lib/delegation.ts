@@ -16,6 +16,8 @@
 import { getAddress } from 'viem';
 import type { Address, RiskFinding } from './types';
 import { shortAddress } from './format';
+import { t } from './i18n';
+import type { Lang } from './i18n';
 
 /* ------------------------------------------------------------------ */
 /* Detection                                                           */
@@ -66,21 +68,21 @@ export interface DelegationRiskInput {
   counterpartyIsRecipient?: boolean;
 }
 
-export function assessDelegationRisks(input: DelegationRiskInput): RiskFinding[] {
+export function assessDelegationRisks(
+  input: DelegationRiskInput,
+  lang: Lang = 'en',
+): RiskFinding[] {
   const findings: RiskFinding[] = [];
 
   if (input.self.delegated) {
     const where = input.self.implementation
       ? shortAddress(input.self.implementation)
-      : 'an address we could not read';
+      : t(lang, 'dl.unreadableWhere');
     findings.push({
       id: 'self-delegated',
       severity: 'danger',
-      title: "Your wallet is running someone else's code",
-      detail:
-        `Your wallet is currently running code that was installed into it, coming from ${where}.` +
-        ' Whoever controls that code can move your funds without asking you again.' +
-        ' This stays true until you remove it.',
+      title: t(lang, 'dl.selfDelegatedTitle'),
+      detail: t(lang, 'dl.selfDelegatedDetail', { where }),
     });
   }
 
@@ -88,10 +90,8 @@ export function assessDelegationRisks(input: DelegationRiskInput): RiskFinding[]
     findings.push({
       id: 'recipient-delegated',
       severity: 'caution',
-      title: 'The recipient wallet has a program installed',
-      detail:
-        'The address you are sending to is a wallet with a program installed in it.' +
-        ' Funds arriving there can be swept away automatically the moment they land.',
+      title: t(lang, 'dl.recipientDelegatedTitle'),
+      detail: t(lang, 'dl.recipientDelegatedDetail'),
     });
   }
 
@@ -160,10 +160,6 @@ interface ParsedEntry {
   isRevoke: boolean;
 }
 
-const MALFORMED_ERROR =
-  'We could not read this signing request. It does not have the shape we expected,' +
-  ' so we cannot explain it — do not sign anything you cannot verify.';
-
 /** Extract the list of entries to explain, or null when malformed. */
 function extractEntries(value: unknown): ParsedEntry[] | null {
   let root: unknown = value;
@@ -213,10 +209,11 @@ function extractEntries(value: unknown): ParsedEntry[] | null {
  */
 export function explainAuthorization(
   value: unknown,
-  opts?: { expectedChainIds?: number[]; selfAddress?: Address },
+  opts?: { expectedChainIds?: number[]; selfAddress?: Address; lang?: Lang },
 ): AuthorizationExplanation | { error: string } {
+  const lang: Lang = opts?.lang ?? 'en';
   const entries = extractEntries(value);
-  if (entries === null) return { error: MALFORMED_ERROR };
+  if (entries === null) return { error: t(lang, 'dl.malformed') };
 
   const allRevoke = entries.every((e) => e.isRevoke);
   const bullets: string[] = [];
@@ -226,25 +223,21 @@ export function explainAuthorization(
 
   for (const entry of entries) {
     if (entry.isRevoke) {
-      bullets.push(
-        `This entry points at the all-zero address ${ZERO_ADDRESS},` +
-          ' which removes an installed program instead of adding one.',
-      );
+      bullets.push(t(lang, 'dl.revokeEntry', { address: ZERO_ADDRESS }));
     } else {
       bullets.push(
-        `The program that would run inside your wallet lives at ${shortAddress(entry.address)}` +
-          ` (full address: ${entry.address}).`,
+        t(lang, 'dl.programEntry', {
+          short: shortAddress(entry.address),
+          full: entry.address,
+        }),
       );
     }
 
     if (entry.chainId === 0) {
       anyChainZero = true;
-      bullets.push(
-        'It applies on EVERY network at once, not just one — that is strictly worse,' +
-          ' because it also covers networks you have never used.',
-      );
+      bullets.push(t(lang, 'dl.everyNetwork'));
     } else if (entry.chainId !== undefined) {
-      bullets.push(`It applies on network number ${entry.chainId}.`);
+      bullets.push(t(lang, 'dl.networkN', { n: entry.chainId }));
       if (
         opts?.expectedChainIds !== undefined &&
         !opts.expectedChainIds.includes(entry.chainId)
@@ -252,43 +245,32 @@ export function explainAuthorization(
         anyUnexpectedChain = true;
       }
     } else {
-      bullets.push('We could not read which network this applies to.');
+      bullets.push(t(lang, 'dl.networkUnreadable'));
     }
 
     if (opts?.selfAddress !== undefined && !entry.isRevoke) {
       if (entry.address.toLowerCase() === opts.selfAddress.toLowerCase()) {
-        bullets.push(
-          'The program address is your own wallet address — that is unusual and' +
-            ' probably not what an honest app would ask for.',
-        );
+        bullets.push(t(lang, 'dl.selfAddress'));
       } else {
         bullets.push(
-          `If you sign, this program is installed into your own wallet` +
-            ` (${shortAddress(opts.selfAddress)}) and can then act as you.`,
+          t(lang, 'dl.installsInto', { wallet: shortAddress(opts.selfAddress) }),
         );
       }
     }
   }
 
-  const revokeDetailBase =
-    `Pointing your wallet at the all-zero address ${ZERO_ADDRESS}` +
-    ' is how you REMOVE an installed program and return your wallet to normal.';
+  const revokeDetailBase = t(lang, 'dl.revokeDetailBase', { address: ZERO_ADDRESS });
 
   if (allRevoke) {
     risks.push({
       id: 'delegation-revoke',
       severity: 'info',
-      title: 'This removes a program, not installs one',
-      detail:
-        `${revokeDetailBase} The address in this request is all zeros,` +
-        ' so this request is a removal — a safe cleanup step.',
+      title: t(lang, 'dl.revokeRiskTitle'),
+      detail: t(lang, 'dl.revokeRiskDetail', { base: revokeDetailBase }),
     });
     return {
-      headline: 'This removes a program from your wallet',
-      outcome:
-        'This signature points your wallet at the all-zero address, which switches off' +
-        ' any program that was installed into it before. Your wallet goes back to being' +
-        ' a normal wallet that only acts when you sign. This is a cleanup step, not a takeover.',
+      headline: t(lang, 'dl.revokeHeadline'),
+      outcome: t(lang, 'dl.revokeOutcome'),
       bullets,
       risks,
     };
@@ -297,22 +279,16 @@ export function explainAuthorization(
   risks.push({
     id: 'delegation-request',
     severity: 'danger',
-    title: 'A program is asking to control your wallet',
-    detail:
-      'Signing this installs a program into your wallet that can then act as you' +
-      ' — move funds, grant permissions — at any time, without asking you again.' +
-      ' No everyday app needs this from you; most requests like this are attempts to steal funds.',
+    title: t(lang, 'dl.requestTitle'),
+    detail: t(lang, 'dl.requestDetail'),
   });
 
   if (anyChainZero) {
     risks.push({
       id: 'delegation-any-chain',
       severity: 'danger',
-      title: 'It would apply on every network',
-      detail:
-        'This request uses network number 0, which means it applies on every network' +
-        ' at once, now and in the future. That is strictly worse than a request' +
-        ' limited to a single network.',
+      title: t(lang, 'dl.anyChainTitle'),
+      detail: t(lang, 'dl.anyChainDetail'),
     });
   }
 
@@ -320,29 +296,21 @@ export function explainAuthorization(
     risks.push({
       id: 'delegation-unknown-network',
       severity: 'caution',
-      title: 'It is for a different network',
-      detail:
-        'This request applies to a network other than the one you are using.' +
-        ' Requests aimed at a network you did not expect are a common trick — be extra careful.',
+      title: t(lang, 'dl.unknownNetworkTitle'),
+      detail: t(lang, 'dl.unknownNetworkDetail'),
     });
   }
 
   risks.push({
     id: 'delegation-revoke',
     severity: 'info',
-    title: 'How to undo this kind of change',
-    detail:
-      `${revokeDetailBase} If you ever sign one of these by mistake,` +
-      ' removing it that way should be your very next step.',
+    title: t(lang, 'dl.undoTitle'),
+    detail: t(lang, 'dl.undoDetail', { base: revokeDetailBase }),
   });
 
   return {
-    headline: 'Signing this would let a program take over your wallet',
-    outcome:
-      'This is not a normal transfer. It installs a program into your own wallet,' +
-      ' and from then on that program can act as you — sending funds and granting' +
-      ' permissions without asking you again. It stays in place until you replace it' +
-      ' with an empty one, and signing costs no gas, so no fee will warn you.',
+    headline: t(lang, 'dl.takeoverHeadline'),
+    outcome: t(lang, 'dl.takeoverOutcome'),
     bullets,
     risks,
   };

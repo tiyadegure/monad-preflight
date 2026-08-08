@@ -69,7 +69,7 @@ export function QueueStrip({
   const nextIndex = queue.legs.findIndex((leg) => leg.status === 'pending');
 
   return (
-    <section className="panel queue-strip" aria-label="Journey">
+    <section className="panel queue-strip" aria-label={t(lang, 'queue.ariaLabel')}>
       <p className="panel-label">{t(lang, 'queue.label')}</p>
       <p className="queue-summary">{summary}</p>
 

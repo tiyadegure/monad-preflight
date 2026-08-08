@@ -2,10 +2,13 @@ import { useState } from 'react';
 import type { Address } from '../lib/types';
 import type { InspectResult } from '../lib/inspect';
 import { inspectSignaturePayload } from '../lib/inspect';
+import { t } from '../lib/i18n';
+import type { Lang } from '../lib/i18n';
 
 interface Props {
   expectedChainIds: number[];
   selfAddress: Address | null;
+  lang: Lang;
 }
 
 /**
@@ -14,7 +17,7 @@ interface Props {
  * the drainer's favourite tool. Paste the request, see what it authorizes.
  * All triage logic lives in src/lib/inspect.ts, shared with the Risk API.
  */
-export function SignatureExplainer({ expectedChainIds, selfAddress }: Props) {
+export function SignatureExplainer({ expectedChainIds, selfAddress, lang }: Props) {
   const [raw, setRaw] = useState('');
   const [result, setResult] = useState<InspectResult | null>(null);
 
@@ -26,8 +29,7 @@ export function SignatureExplainer({ expectedChainIds, selfAddress }: Props) {
       parsed = JSON.parse(text);
     } catch {
       setResult({
-        error:
-          'That is not valid JSON. Copy the whole request from the app that asked for it.',
+        error: t(lang, 'sign.invalidJson'),
       });
       return;
     }
@@ -42,27 +44,25 @@ export function SignatureExplainer({ expectedChainIds, selfAddress }: Props) {
   const explained = result && !('error' in result) ? result : null;
 
   return (
-    <section className="panel" aria-label="Signature request explainer">
-      <p className="panel-label">Signature inspector · what would signing authorize?</p>
+    <section className="panel" aria-label={t(lang, 'sign.ariaLabel')}>
+      <p className="panel-label">{t(lang, 'sign.label')}</p>
       <p className="hint" style={{ marginBottom: 10 }}>
-        Signing costs no gas and looks harmless — which is why drainers ask for it.
-        Paste a request here before you approve it: a signature request, a
-        wallet-takeover request, or a batch of bundled instructions.
+        {t(lang, 'sign.hint')}
       </p>
 
       <textarea
         value={raw}
         onChange={(e) => setRaw(e.target.value)}
-        placeholder='{"types":{…},"domain":{…},"primaryType":"Permit","message":{…}}'
+        placeholder={t(lang, 'sign.placeholder')}
         rows={4}
         spellCheck={false}
-        aria-label="Request JSON"
+        aria-label={t(lang, 'sign.jsonAria')}
         style={{ width: '100%', resize: 'vertical' }}
       />
 
       <div className="sign-bar">
         <button className="btn-primary" onClick={explain} disabled={!raw.trim()}>
-          Explain this request
+          {t(lang, 'sign.explain')}
         </button>
         {result && (
           <button
@@ -72,7 +72,7 @@ export function SignatureExplainer({ expectedChainIds, selfAddress }: Props) {
               setResult(null);
             }}
           >
-            Clear
+            {t(lang, 'sign.clear')}
           </button>
         )}
       </div>
@@ -113,8 +113,7 @@ export function SignatureExplainer({ expectedChainIds, selfAddress }: Props) {
           )}
 
           <p className="hint" style={{ marginTop: 12 }}>
-            PreFlight cannot sign this for you — read it here, then decide in your
-            wallet.
+            {t(lang, 'sign.cannotSign')}
           </p>
         </div>
       )}

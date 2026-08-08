@@ -12,6 +12,8 @@
 
 import { getAddress } from 'viem';
 import type { Address } from './types';
+import { t } from './i18n';
+import type { Lang } from './i18n';
 
 /* ------------------------------------------------------------------ */
 /* Contracts                                                           */
@@ -49,13 +51,13 @@ const EXPLORER_ADDRESS_RE = /\/address\/(0x[0-9a-fA-F]{40})/;
  */
 export function normalizeObserverInput(
   text: string,
+  lang: Lang = 'en',
 ): { address: Address } | { error: string } {
   const trimmed = text.trim();
 
   if (trimmed === '') {
     return {
-      error:
-        'Paste an address to look up. It starts with "0x" and is 42 characters long.',
+      error: t(lang, 'obs.pasteEmpty'),
     };
   }
 
@@ -65,8 +67,7 @@ export function normalizeObserverInput(
 
   if (candidate === undefined) {
     return {
-      error:
-        "That doesn't look like an address. Paste one that starts with \"0x\" and is 42 characters long, or a link to its page on a block explorer.",
+      error: t(lang, 'obs.notAddress'),
     };
   }
 
@@ -74,8 +75,7 @@ export function normalizeObserverInput(
     return { address: getAddress(candidate) };
   } catch {
     return {
-      error:
-        'That address looks mistyped — the mix of capital and small letters does not check out. Copy it again from the original source.',
+      error: t(lang, 'obs.badChecksum'),
     };
   }
 }
@@ -95,6 +95,7 @@ export function normalizeObserverInput(
 export async function profileAddress(
   reader: ObserverReader,
   address: Address,
+  lang: Lang = 'en',
 ): Promise<ObserverProfile> {
   // Swallow getCode rejections up front so Promise.all never sees them.
   const codeRead = reader.getCode(address).then(
@@ -119,37 +120,42 @@ export async function profileAddress(
     nativeBalanceWei,
     txCount,
     isContract,
-    firstSeenNote: buildFirstSeenNote({
-      isContract,
-      codeKnown: codeResult.known,
-      txCount,
-      nativeBalanceWei,
-    }),
+    firstSeenNote: buildFirstSeenNote(
+      {
+        isContract,
+        codeKnown: codeResult.known,
+        txCount,
+        nativeBalanceWei,
+      },
+      lang,
+    ),
   };
 }
 
-function buildFirstSeenNote(facts: {
-  isContract: boolean;
-  codeKnown: boolean;
-  txCount: number;
-  nativeBalanceWei: bigint;
-}): string {
+function buildFirstSeenNote(
+  facts: {
+    isContract: boolean;
+    codeKnown: boolean;
+    txCount: number;
+    nativeBalanceWei: bigint;
+  },
+  lang: Lang,
+): string {
   const { isContract, codeKnown, txCount, nativeBalanceWei } = facts;
 
   let note: string;
   if (isContract) {
-    note = 'This address is a program (smart contract).';
+    note = t(lang, 'obs.isContract');
   } else if (txCount === 0 && nativeBalanceWei === 0n) {
-    note = 'This wallet has never been used — no transactions, no funds.';
+    note = t(lang, 'obs.neverUsed');
   } else if (txCount === 0) {
-    note = 'This wallet holds funds but has never sent a transaction.';
+    note = t(lang, 'obs.holdsNotSent');
   } else {
-    note = `This wallet has sent ${txCount} transaction${txCount === 1 ? '' : 's'}.`;
+    note = t(lang, txCount === 1 ? 'obs.sentOne' : 'obs.sentMany', { count: txCount });
   }
 
   if (!codeKnown) {
-    note +=
-      ' We could not confirm whether this address is a wallet or a program — the network did not answer that check.';
+    note += t(lang, 'obs.codeUnknown');
   }
 
   return note;
@@ -166,19 +172,20 @@ function buildFirstSeenNote(facts: {
 export function describeProfile(
   p: ObserverProfile,
   formatMon: (wei: bigint) => string,
+  lang: Lang = 'en',
 ): string[] {
-  const balanceBullet = `Holds ${formatMon(p.nativeBalanceWei)}.`;
+  const balanceBullet = t(lang, 'obs.holds', { amount: formatMon(p.nativeBalanceWei) });
 
   const txBullet =
     p.txCount === 0
-      ? 'Has never sent a transaction.'
+      ? t(lang, 'obs.txNone')
       : p.txCount === 1
-        ? 'Has sent 1 transaction.'
-        : `Has sent ${p.txCount} transactions.`;
+        ? t(lang, 'obs.txOne')
+        : t(lang, 'obs.txMany', { count: p.txCount });
 
   const kindBullet = p.isContract
-    ? 'This is a program (smart contract), not a personal wallet.'
-    : 'This looks like a regular wallet, not a program.';
+    ? t(lang, 'obs.isProgram')
+    : t(lang, 'obs.isWallet');
 
   return [balanceBullet, txBullet, kindBullet, p.firstSeenNote];
 }

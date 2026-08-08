@@ -20,6 +20,8 @@ import { decodeAbiParameters, getAddress } from 'viem';
 import type { Address, Hex, TokenInfo } from './types';
 import type { RpcCallFn } from './simulate';
 import { UNLIMITED_THRESHOLD, shortAddress } from './format';
+import { t } from './i18n';
+import type { Lang } from './i18n';
 
 /* ------------------------------------------------------------------ */
 /* Public shapes (the Hangar UI consumes these exactly)                */
@@ -133,6 +135,7 @@ async function fetchTokenInfo(
   rpc: RpcCallFn,
   cache: Map<string, TokenInfo>,
   notes: string[],
+  lang: Lang,
 ): Promise<TokenInfo> {
   const key = address.toLowerCase();
   const cached = cache.get(key);
@@ -163,9 +166,7 @@ async function fetchTokenInfo(
   }
 
   if (degraded) {
-    notes.push(
-      `The token at ${shortAddress(checksummed)} did not report its details, so we show a shortened address and assume 18 decimals.`,
-    );
+    notes.push(t(lang, 'appr.tokenDegraded', { address: shortAddress(checksummed) }));
   }
 
   const info: TokenInfo = { address: checksummed, symbol, decimals };
@@ -220,9 +221,10 @@ function collectPair(raw: unknown, pairs: Map<string, PairSeen>): void {
 export async function scanApprovals(
   rpc: RpcCallFn,
   owner: Address,
-  opts?: { maxChunks?: number },
+  opts?: { maxChunks?: number; lang?: Lang },
 ): Promise<ApprovalScan> {
   const notes: string[] = [];
+  const lang = opts?.lang ?? 'en';
   const maxChunks = Math.max(1, Math.floor(opts?.maxChunks ?? DEFAULT_MAX_CHUNKS));
 
   let latest: bigint;
@@ -231,9 +233,7 @@ export async function scanApprovals(
     if (typeof raw !== 'string') throw new Error('unexpected block number response');
     latest = hexToBigInt(raw);
   } catch {
-    throw new Error(
-      'We could not reach the network to find the latest block, so the approval scan did not run. Please try again.',
-    );
+    throw new Error(t(lang, 'appr.networkError'));
   }
 
   const ownerTopic = `0x${padAddressWord(owner)}`;
@@ -273,12 +273,15 @@ export async function scanApprovals(
 
   const scannedBlocks = Number(latest - windowFrom + 1n);
   notes.push(
-    `Scanned the last ${scannedBlocks.toLocaleString('en-US')} blocks — approvals granted earlier than that will not show here yet.`,
+    t(lang, 'appr.scanNote', { count: scannedBlocks.toLocaleString('en-US') }),
   );
   if (failedChunks > 0) {
     notes.push(
-      `${failedChunks} block range${failedChunks === 1 ? '' : 's'} could not be read, so this list may be incomplete. ` +
-        'Scan again before treating it as the full picture.',
+      t(
+        lang,
+        failedChunks === 1 ? 'appr.failedRangeOne' : 'appr.failedRangeMany',
+        { n: String(failedChunks) },
+      ),
     );
   }
 
@@ -291,8 +294,8 @@ export async function scanApprovals(
     candidates = candidates.slice(0, MAX_PAIRS);
     notes.push(
       skipped === 1
-        ? `This wallet has a lot of approvals — we checked the ${MAX_PAIRS} most recent and skipped 1 older one.`
-        : `This wallet has a lot of approvals — we checked the ${MAX_PAIRS} most recent and skipped ${skipped} older ones.`,
+        ? t(lang, 'appr.skippedOne', { max: String(MAX_PAIRS) })
+        : t(lang, 'appr.skippedMany', { max: String(MAX_PAIRS), skipped: String(skipped) }),
     );
   }
 
@@ -318,7 +321,7 @@ export async function scanApprovals(
     }
     if (allowanceRaw === 0n) continue; // revoked or fully spent — not live
 
-    const token = await fetchTokenInfo(pair.token, rpc, tokenCache, notes);
+    const token = await fetchTokenInfo(pair.token, rpc, tokenCache, notes, lang);
     records.push({
       token,
       spender: toChecksum(pair.spender),
@@ -336,8 +339,11 @@ export async function scanApprovals(
 
   if (unverifiedPairs > 0) {
     notes.push(
-      `We found ${unverifiedPairs} more permission${unverifiedPairs === 1 ? '' : 's'} but could not read ` +
-        `${unverifiedPairs === 1 ? 'its' : 'their'} current state, so ${unverifiedPairs === 1 ? 'it is' : 'they are'} not listed above.`,
+      t(
+        lang,
+        unverifiedPairs === 1 ? 'appr.unverifiedOne' : 'appr.unverifiedMany',
+        { n: String(unverifiedPairs) },
+      ),
     );
   }
 

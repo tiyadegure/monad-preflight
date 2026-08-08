@@ -47,7 +47,7 @@ export function SettingsDrawer({
   const addContact = () => {
     setBookError(null);
     try {
-      onBookChange(saveEntry({ name: bookName, address: bookAddress }));
+      onBookChange(saveEntry({ name: bookName, address: bookAddress }, undefined, lang));
       setBookName('');
       setBookAddress('');
     } catch (err) {
@@ -59,7 +59,7 @@ export function SettingsDrawer({
     n === 1 ? t(lang, one) : t(lang, many, { count: n });
 
   return (
-    <section className="panel" aria-label="Settings">
+    <section className="panel" aria-label={t(lang, 'settings.ariaLabel')}>
       <button
         className="btn-ghost"
         onClick={() => setOpen((o) => !o)}
@@ -145,14 +145,14 @@ export function SettingsDrawer({
                 onChange={(e) => setBookName(e.target.value)}
                 placeholder="alice"
                 style={{ flex: '0 1 140px', minWidth: 0 }}
-                aria-label="Contact name"
+                aria-label={t(lang, 'settings.contactNameAria')}
               />
               <input
                 value={bookAddress}
                 onChange={(e) => setBookAddress(e.target.value)}
                 placeholder="0x…"
                 style={{ flex: '1 1 200px', minWidth: 0 }}
-                aria-label="Contact address"
+                aria-label={t(lang, 'settings.contactAddressAria')}
               />
               <button
                 className="btn-ghost"

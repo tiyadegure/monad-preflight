@@ -11,6 +11,8 @@
  */
 
 import type { RpcCallFn } from './simulate';
+import { t } from './i18n';
+import type { Lang } from './i18n';
 
 /* ------------------------------------------------------------------ */
 /* Public shape                                                        */
@@ -43,21 +45,6 @@ const BLOCK_COUNT_HEX = '0x14';
 /** We ask for the 10th, 50th and 90th percentile tips; we use the 50th. */
 const REWARD_PERCENTILES = [10, 50, 90];
 const MEDIAN_ROW_INDEX = 1;
-
-const VERDICT_QUIET = 'Network is quiet — fees are low right now.';
-const VERDICT_NORMAL = 'Fees are about normal for this network.';
-const VERDICT_HIGH = 'Fees are running high right now.';
-const VERDICT_NO_COMPARISON = 'We could not compare this fee to recent blocks.';
-
-const ADVICE_WAIT =
-  'If this is not urgent, waiting a few minutes will probably cost less.';
-
-const NOTE_CONGESTION =
-  'Recent blocks have been nearly full, so fees may keep rising.';
-const NOTE_HISTORY_UNAVAILABLE =
-  'We could not read recent fee data from the network, so we cannot say whether this fee is high or low.';
-const NOTE_PRICE_UNAVAILABLE =
-  'We could not read the current network fee either, so the fee shown here may be zero.';
 
 /* ------------------------------------------------------------------ */
 /* Small helpers                                                       */
@@ -100,10 +87,10 @@ function percentileRank(current: bigint, fees: bigint[]): number {
   return Math.round(((below + equal / 2) / fees.length) * 100);
 }
 
-function verdictFor(percentile: number): string {
-  if (percentile <= 33) return VERDICT_QUIET;
-  if (percentile <= 66) return VERDICT_NORMAL;
-  return VERDICT_HIGH;
+function verdictFor(percentile: number, lang: Lang): string {
+  if (percentile <= 33) return t(lang, 'go.verdict.quiet');
+  if (percentile <= 66) return t(lang, 'go.verdict.normal');
+  return t(lang, 'go.verdict.high');
 }
 
 /* ------------------------------------------------------------------ */
@@ -169,8 +156,12 @@ function parseFeeHistory(raw: unknown): FeeHistoryFacts | null {
 /* Fallback path: fee history unavailable                              */
 /* ------------------------------------------------------------------ */
 
-async function readFeesWithoutHistory(rpc: RpcCallFn, gasUsed: bigint): Promise<FeeReading> {
-  const notes = [NOTE_HISTORY_UNAVAILABLE];
+async function readFeesWithoutHistory(
+  rpc: RpcCallFn,
+  gasUsed: bigint,
+  lang: Lang,
+): Promise<FeeReading> {
+  const notes = [t(lang, 'go.note.historyUnavailable')];
 
   let gasPriceWei = 0n;
   try {
@@ -178,7 +169,7 @@ async function readFeesWithoutHistory(rpc: RpcCallFn, gasUsed: bigint): Promise<
     if (parsed === null) throw new Error('unreadable gas price');
     gasPriceWei = parsed;
   } catch {
-    notes.push(NOTE_PRICE_UNAVAILABLE);
+    notes.push(t(lang, 'go.note.priceUnavailable'));
   }
 
   return {
@@ -186,7 +177,7 @@ async function readFeesWithoutHistory(rpc: RpcCallFn, gasUsed: bigint): Promise<
     priorityFeeWei: 0n,
     totalFeeWei: gasPriceWei * gasUsed,
     percentileVsRecent: null,
-    verdict: VERDICT_NO_COMPARISON,
+    verdict: t(lang, 'go.verdict.noComparison'),
     advice: null,
     notes,
   };
@@ -203,7 +194,11 @@ async function readFeesWithoutHistory(rpc: RpcCallFn, gasUsed: bigint): Promise<
  * the reading multiplies it by (base fee + typical tip) to get the
  * whole fee in wei, then compares against the last 20 blocks.
  */
-export async function readFees(rpc: RpcCallFn, gasUsed: bigint): Promise<FeeReading> {
+export async function readFees(
+  rpc: RpcCallFn,
+  gasUsed: bigint,
+  lang: Lang = 'en',
+): Promise<FeeReading> {
   let facts: FeeHistoryFacts | null = null;
   try {
     const raw = await rpc('eth_feeHistory', [BLOCK_COUNT_HEX, 'latest', REWARD_PERCENTILES]);
@@ -211,7 +206,7 @@ export async function readFees(rpc: RpcCallFn, gasUsed: bigint): Promise<FeeRead
   } catch {
     facts = null;
   }
-  if (facts === null) return readFeesWithoutHistory(rpc, gasUsed);
+  if (facts === null) return readFeesWithoutHistory(rpc, gasUsed, lang);
 
   const baseFeeWei = facts.currentBaseFee;
   const priorityFeeWei = median(facts.medianTips);
@@ -223,7 +218,7 @@ export async function readFees(rpc: RpcCallFn, gasUsed: bigint): Promise<FeeRead
     const sum = facts.gasUsedRatios.reduce((acc, ratio) => acc + ratio, 0);
     // The tiny epsilon absorbs floating-point drift when averaging, so a
     // network sitting exactly at 0.8 never trips the warning spuriously.
-    if (sum / facts.gasUsedRatios.length > 0.8 + 1e-9) notes.push(NOTE_CONGESTION);
+    if (sum / facts.gasUsedRatios.length > 0.8 + 1e-9) notes.push(t(lang, 'go.note.congestion'));
   }
 
   return {
@@ -231,8 +226,8 @@ export async function readFees(rpc: RpcCallFn, gasUsed: bigint): Promise<FeeRead
     priorityFeeWei,
     totalFeeWei,
     percentileVsRecent,
-    verdict: verdictFor(percentileVsRecent),
-    advice: percentileVsRecent > 80 ? ADVICE_WAIT : null,
+    verdict: verdictFor(percentileVsRecent, lang),
+    advice: percentileVsRecent > 80 ? t(lang, 'go.advice.wait') : null,
     notes,
   };
 }

@@ -1,6 +1,8 @@
 import type { PublicClient } from 'viem';
 import type { Address, Hex, MinedReceipt } from './types';
 import type { NetworkConfig } from './networks';
+import { t } from './i18n';
+import type { Lang } from './i18n';
 
 /**
  * Thin EIP-1193 wallet layer (MetaMask and compatible injected wallets).
@@ -19,11 +21,14 @@ export function getInjectedProvider(): Eip1193Provider | null {
   return w.ethereum ?? null;
 }
 
-export async function connect(provider: Eip1193Provider): Promise<Address> {
+export async function connect(
+  provider: Eip1193Provider,
+  lang: Lang = 'en',
+): Promise<Address> {
   const accounts = (await provider.request({
     method: 'eth_requestAccounts',
   })) as Address[];
-  if (!accounts?.length) throw new Error('Your wallet did not share an account.');
+  if (!accounts?.length) throw new Error(t(lang, 'wallet.noAccount'));
   return accounts[0];
 }
 

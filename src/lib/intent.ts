@@ -12,6 +12,8 @@
 
 import type { ParseFailure, ParseResult } from './types';
 import { isAddressFormat } from './format';
+import { t } from './i18n';
+import type { Lang } from './i18n';
 
 const DEFAULT_SUGGESTIONS = [
   'send 0.5 MON to 0x<recipient address>',
@@ -40,7 +42,10 @@ const RESERVED = new Set([
 /** mon / monad mean the native coin → represented as token: undefined. */
 const NATIVE_WORDS = new Set(['mon', 'monad']);
 
-function failure(reason: string, suggestions = DEFAULT_SUGGESTIONS): ParseFailure {
+function failure(
+  reason: string,
+  suggestions = DEFAULT_SUGGESTIONS,
+): ParseFailure {
   return { ok: false, reason, suggestions };
 }
 
@@ -48,19 +53,19 @@ function failure(reason: string, suggestions = DEFAULT_SUGGESTIONS): ParseFailur
 /* Raw transaction JSON ("explain this before I sign it")              */
 /* ------------------------------------------------------------------ */
 
-function parseRawJson(text: string): ParseResult {
+function parseRawJson(text: string, lang: Lang = 'en'): ParseResult {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch {
     return failure(
-      'That looks like a transaction in JSON form, but the JSON is not valid — copy it again from the source app.',
+      t(lang, 'int.rawNotJson'),
       [RAW_SUGGESTION],
     );
   }
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
     return failure(
-      'A raw transaction should be a JSON object with at least a "to" address.',
+      t(lang, 'int.rawNotObject'),
       [RAW_SUGGESTION],
     );
   }
@@ -68,7 +73,7 @@ function parseRawJson(text: string): ParseResult {
   const to = typeof record.to === 'string' ? record.to.trim() : '';
   if (!isAddressFormat(to)) {
     return failure(
-      'A raw transaction needs a "to" address — 0x followed by 40 hex characters.',
+      t(lang, 'int.rawNoTo'),
       [RAW_SUGGESTION],
     );
   }
@@ -80,7 +85,7 @@ function parseRawJson(text: string): ParseResult {
     value = record.value.trim();
   } else if (typeof record.value === 'number') {
     value = String(record.value);
-    notes.push('The value was a plain number, so I read it as an amount of MON.');
+    notes.push(t(lang, 'int.rawNumberNote'));
   }
 
   // Extra keys like from/gas/nonce are the wallet's business — ignored.
@@ -232,6 +237,7 @@ function parseWrapUnwrap(
   lower: string,
   masked: string,
   addressCount: number,
+  lang: Lang = 'en',
 ): ParseResult | null {
   let action: 'wrap' | 'unwrap' | null = null;
   if (/\bunwrap\b/.test(lower)) {
@@ -254,17 +260,14 @@ function parseWrapUnwrap(
   // instruction behind a misleading note. Refuse and ask them to split.
   if (addressCount > 0 && /\b(send|transfer|pay|move)\b/.test(lower)) {
     return failure(
-      'That mixes wrapping with a second action, and doing half of it silently would be worse than asking. ' +
-        'Split it into steps — e.g. "wrap 1 MON then send 0.5 WMON to 0x…" ("然后" works too).',
+      t(lang, 'int.wrapMixed'),
       ['wrap 1 MON then send 0.5 WMON to 0x<recipient>'],
     );
   }
 
   const notes: string[] = [];
   if (addressCount > 0) {
-    notes.push(
-      'Wrapping happens entirely inside your own wallet, so I ignored the address in your message.',
-    );
+    notes.push(t(lang, 'int.wrapIgnoredAddress'));
   }
 
   const wantsAll = /\b(all|everything|entire balance|whole balance)\b/.test(lower);
@@ -274,14 +277,13 @@ function parseWrapUnwrap(
   if (action === 'wrap') {
     if (amountValue === undefined && wantsAll) {
       return failure(
-        'Wrapping your entire balance would leave no MON to pay the network fee with, ' +
-          'so the transaction would fail. Pick a number instead, like "wrap 1 MON".',
+        t(lang, 'int.wrapAllFails'),
         WRAP_SUGGESTIONS,
       );
     }
     if (amountValue === undefined) {
       return failure(
-        'How much MON do you want to wrap? Add an amount, like "wrap 1 MON".',
+        t(lang, 'int.wrapHowMuch'),
         WRAP_SUGGESTIONS,
       );
     }
@@ -300,7 +302,7 @@ function parseWrapUnwrap(
   }
   if (amountValue === undefined) {
     return failure(
-      'How much WMON do you want to unwrap? Add an amount, like "unwrap 2 WMON" — or say "all".',
+      t(lang, 'int.unwrapHowMuch'),
       UNWRAP_SUGGESTIONS,
     );
   }
@@ -314,19 +316,19 @@ function parseWrapUnwrap(
 /* Main entry point                                                    */
 /* ------------------------------------------------------------------ */
 
-export function parseIntent(text: string): ParseResult {
+export function parseIntent(text: string, lang: Lang = 'en'): ParseResult {
   const trimmed = text.trim();
   if (trimmed.length === 0) {
-    return failure('Tell me what you want to do and I will prepare it for you.');
+    return failure(t(lang, 'int.empty'));
   }
-  if (trimmed.startsWith('{')) return parseRawJson(trimmed);
+  if (trimmed.startsWith('{')) return parseRawJson(trimmed, lang);
 
   const { masked, addresses } = maskAddresses(normalizeChinese(trimmed));
   const lower = masked.toLowerCase();
   const notes: string[] = [];
 
   /* ---- wrap / unwrap (checked first: these need no counterparty) ---- */
-  const wrapResult = parseWrapUnwrap(lower, masked, addresses.length);
+  const wrapResult = parseWrapUnwrap(lower, masked, addresses.length, lang);
   if (wrapResult) return wrapResult;
 
   /* ---- action ---- */
@@ -341,7 +343,7 @@ export function parseIntent(text: string): ParseResult {
 
   if (!isRevoke && !isApprove && !isSend) {
     return failure(
-      'I did not catch what you want to do. I can send MON or tokens, approve spending, revoke an approval, or wrap MON into WMON and back.',
+      t(lang, 'int.noAction'),
     );
   }
 
@@ -350,7 +352,7 @@ export function parseIntent(text: string): ParseResult {
   // is a guess we refuse to make.
   if (/\bhalf\b/.test(lower)) {
     return failure(
-      'Half of a balance is ambiguous — the balance can change before you sign. Say the exact amount instead.',
+      t(lang, 'int.halfAmbiguous'),
     );
   }
   const wantsUnlimited = /\b(unlimited|infinite|max)\b/.test(lower);
@@ -386,7 +388,7 @@ export function parseIntent(text: string): ParseResult {
     const distinct = new Set(candidates.map((c) => c.toLowerCase()));
     if (distinct.size > 1) {
       notes.push(
-        `Several words could be the token name — I went with "${tokenWord}".`,
+        t(lang, 'int.severalTokens', { token: tokenWord }),
       );
     }
   }
@@ -409,8 +411,8 @@ export function parseIntent(text: string): ParseResult {
   if (counterpartyIndex === null) {
     return failure(
       isSend
-        ? 'I need a recipient — include the full address (0x followed by 40 characters) you want to send to.'
-        : 'I need the address of the app or wallet the approval is for — include the full 0x… address.',
+        ? t(lang, 'int.needRecipient')
+        : t(lang, 'int.needSpender'),
     );
   }
 
@@ -419,10 +421,17 @@ export function parseIntent(text: string): ParseResult {
     const otherIndex = counterpartyIndex === 0 ? 1 : 0;
     token = addresses[otherIndex];
     notes.push(
-      `Two addresses found — I treated ${addresses[counterpartyIndex].slice(0, 8)}… as the ${isSend ? 'recipient' : 'spender'} and ${addresses[otherIndex].slice(0, 8)}… as the token.`,
+      t(
+        lang,
+        isSend ? 'int.twoAddressesSend' : 'int.twoAddressesApprove',
+        {
+          first: addresses[counterpartyIndex].slice(0, 8),
+          second: addresses[otherIndex].slice(0, 8),
+        },
+      ),
     );
   } else if (addresses.length > 2) {
-    notes.push('More than two addresses found — I used the first ones and ignored the rest.');
+    notes.push(t(lang, 'int.tooManyAddresses'));
   }
 
   /* ---- per-action validation & assembly ---- */
@@ -430,13 +439,13 @@ export function parseIntent(text: string): ParseResult {
   if (isSend) {
     if (wantsUnlimited) {
       return failure(
-        '"Unlimited" only makes sense for approvals. To send, give a number — or say "all" to send your whole balance.',
+        t(lang, 'int.unlimitedSend'),
         ['send 0.5 MON to 0x<recipient>', 'send all my MON to 0x<recipient>'],
       );
     }
     if (!wantsAll && amountValue === undefined) {
       return failure(
-        'How much do you want to send? Add an amount, like "send 0.5 MON to 0x…", or say "all".',
+        t(lang, 'int.sendHowMuch'),
         ['send 0.5 MON to 0x<recipient>', 'send all my tUSD to 0x<recipient>'],
       );
     }
@@ -446,18 +455,18 @@ export function parseIntent(text: string): ParseResult {
     const useAll = wantsAll && amountValue === undefined;
     if (wantsAll && amountValue !== undefined) {
       notes.push(
-        `Your message mentioned both "all" and the number ${amountValue} — I used ${amountValue}. Say just "all" if you want to send everything.`,
+        t(lang, 'int.allAndNumber', { n: amountValue }),
       );
     }
     if (token === undefined && !tokenIsNative && HAS_CJK.test(masked)) {
       // Words we could not translate remain — one of them is probably the
       // token's name. Guessing "native MON" here would move the wrong asset.
       return failure(
-        'I could not read the token name in that. Name it by its symbol (like tUSD or WMON), or paste the token\'s contract address.',
+        t(lang, 'int.tokenNameUnreadable'),
       );
     }
     if (token === undefined && !tokenIsNative && amountValue !== undefined) {
-      notes.push('No token named — I assumed you mean native MON.');
+      notes.push(t(lang, 'int.assumedNative'));
     }
     return {
       ok: true,
@@ -474,13 +483,13 @@ export function parseIntent(text: string): ParseResult {
   if (isApprove) {
     if (token === undefined) {
       return failure(
-        'Which token is this approval for? MON itself cannot be approved — name a token, like "approve 0x… to spend 100 tUSD".',
+        t(lang, 'int.approveWhichToken'),
         ['approve 0x<app> to spend 100 tUSD', 'allow 0x<app> to spend unlimited tUSD'],
       );
     }
     if (!wantsUnlimited && amountValue === undefined) {
       return failure(
-        'How much should they be allowed to spend? Give an amount, or say "unlimited".',
+        t(lang, 'int.approveHowMuch'),
         ['approve 0x<app> to spend 100 tUSD', 'allow 0x<app> to spend unlimited tUSD'],
       );
     }
@@ -496,10 +505,10 @@ export function parseIntent(text: string): ParseResult {
     };
   }
 
-  // revoke
-  if (token === undefined) {
+// revoke
+if (token === undefined) {
     return failure(
-      'Which token do you want to revoke access to? Name it, like "revoke 0x…\'s access to my tUSD".',
+      t(lang, 'int.revokeWhichToken'),
       ["revoke 0x<app>'s access to my tUSD", 'cancel the approval for 0x<app> on tUSD'],
     );
   }

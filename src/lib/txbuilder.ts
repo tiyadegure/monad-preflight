@@ -11,6 +11,8 @@ import {
 } from './format';
 import type { ChainReader, TokenRegistry } from './tokens';
 import { findToken } from './tokens';
+import { t } from './i18n';
+import type { Lang } from './i18n';
 
 /** 0.02 MON kept back for gas when the user asks to send "all". */
 export const GAS_HEADROOM_WEI = 20000000000000000n;
@@ -46,13 +48,12 @@ const WMON_ABI = parseAbi([
 /* ------------------------------------------------------------------ */
 
 /** Checksum-validate an address or fail with a plain-language message. */
-function checksum(value: string, what: string): Address {
+function checksum(value: string, what: string, lang: Lang): Address {
   try {
     return getAddress(value);
   } catch {
     throw new BuildError(
-      `"${value}" is not a valid ${what} — an address is 42 characters ` +
-        'starting with 0x. Double-check for typos.',
+      t(lang, 'tb.invalidAddress', { value, what }),
     );
   }
 }
@@ -60,17 +61,19 @@ function checksum(value: string, what: string): Address {
 function requireCounterparty(
   intent: ParsedIntent,
   role: 'recipient' | 'spender',
+  lang: Lang,
 ): Address {
   if (!intent.counterparty) {
     throw new BuildError(
       role === 'recipient'
-        ? 'I need a recipient — add the address (0x…) you want to send to.'
-        : 'I need to know which app or address gets the spending permission — add its address (0x…).',
+        ? t(lang, 'tb.needRecipient')
+        : t(lang, 'tb.needSpender'),
     );
   }
   return checksum(
     intent.counterparty,
-    role === 'recipient' ? 'recipient address' : 'spender address',
+    role === 'recipient' ? t(lang, 'tb.what.recipient') : t(lang, 'tb.what.spender'),
+    lang,
   );
 }
 
@@ -78,6 +81,7 @@ function requireCounterparty(
 async function resolveToken(
   tokenText: string | undefined,
   deps: BuildDeps,
+  lang: Lang,
 ): Promise<TokenInfo> {
   if (tokenText === undefined) return NATIVE_MON;
   const text = tokenText.trim();
@@ -85,15 +89,15 @@ async function resolveToken(
   if (isAddressFormat(text)) {
     const known = findToken(deps.registry, text);
     if (known) return known;
-    const address = checksum(text, 'token address');
+    const address = checksum(text, t(lang, 'tb.what.token'), lang);
     try {
-      return await deps.reader.fetchTokenInfo(address);
+      return await deps.reader.fetchTokenInfo(address, lang);
     } catch (err) {
       // The reader already speaks plain language; keep its message.
       throw new BuildError(
         err instanceof Error
           ? err.message
-          : `I could not read token details at ${shortAddress(address)}.`,
+          : t(lang, 'tb.tokenReadFailed', { address: shortAddress(address) }),
       );
     }
   }
@@ -101,16 +105,16 @@ async function resolveToken(
   const known = findToken(deps.registry, text);
   if (known) return known;
   throw new BuildError(
-    `I do not know the token "${text}" yet — paste its contract address once and I will remember it.`,
+    t(lang, 'tb.unknownToken', { token: text }),
   );
 }
 
-function parseUserAmount(value: string, token: TokenInfo): bigint {
+function parseUserAmount(value: string, token: TokenInfo, lang: Lang): bigint {
   try {
     return parseAmount(value, token.decimals);
   } catch (err) {
     throw new BuildError(
-      err instanceof Error ? err.message : `"${value}" is not a valid amount.`,
+      err instanceof Error ? err.message : t(lang, 'tb.invalidAmount', { value }),
     );
   }
 }
@@ -123,21 +127,22 @@ export async function buildTx(
   intent: ParsedIntent,
   from: Address,
   deps: BuildDeps,
+  lang: Lang = 'en',
 ): Promise<PreparedTx> {
-  const sender = checksum(from, 'sender address (your wallet)');
+  const sender = checksum(from, t(lang, 'tb.what.sender'), lang);
   switch (intent.action) {
     case 'send':
-      return buildSend(intent, sender, deps);
+      return buildSend(intent, sender, deps, lang);
     case 'approve':
-      return buildApprove(intent, sender, deps);
+      return buildApprove(intent, sender, deps, lang);
     case 'revoke':
-      return buildRevoke(intent, sender, deps);
+      return buildRevoke(intent, sender, deps, lang);
     case 'wrap':
-      return buildWrap(intent, sender, deps);
+      return buildWrap(intent, sender, deps, lang);
     case 'unwrap':
-      return buildUnwrap(intent, sender, deps);
+      return buildUnwrap(intent, sender, deps, lang);
     case 'raw':
-      return buildRaw(intent, sender);
+      return buildRaw(intent, sender, lang);
   }
 }
 
@@ -149,9 +154,10 @@ async function buildSend(
   intent: ParsedIntent,
   from: Address,
   deps: BuildDeps,
+  lang: Lang,
 ): Promise<PreparedTx> {
-  const token = await resolveToken(intent.token, deps);
-  const recipient = requireCounterparty(intent, 'recipient');
+  const token = await resolveToken(intent.token, deps, lang);
+  const recipient = requireCounterparty(intent, 'recipient', lang);
   const amount = intent.amount;
 
   // Native MON: plain value transfer, no calldata.
@@ -163,16 +169,19 @@ async function buildSend(
       amountRaw = balance - GAS_HEADROOM_WEI;
       if (amountRaw <= 0n) {
         throw new BuildError(
-          'Your MON balance is too small to send anything after keeping ' +
-            `${formatTokenAmount(GAS_HEADROOM_WEI, NATIVE_MON)} back for gas money.`,
+          t(lang, 'tb.balanceTooSmall', {
+            amount: formatTokenAmount(GAS_HEADROOM_WEI, NATIVE_MON),
+          }),
         );
       }
-      gasNote = ` (keeping ${formatTokenAmount(GAS_HEADROOM_WEI, NATIVE_MON)} back for gas)`;
+      gasNote = t(lang, 'tb.gasNote', {
+        amount: formatTokenAmount(GAS_HEADROOM_WEI, NATIVE_MON),
+      });
     } else if (amount?.value !== undefined) {
-      amountRaw = parseUserAmount(amount.value, token);
+      amountRaw = parseUserAmount(amount.value, token, lang);
     } else {
       throw new BuildError(
-        'How much MON do you want to send? Add an amount, like "send 0.5 MON".',
+        t(lang, 'tb.howMuchMon'),
       );
     }
     return {
@@ -181,7 +190,10 @@ async function buildSend(
       data: '0x',
       value: amountRaw,
       kind: 'native-transfer',
-      summary: `Send ${formatTokenAmount(amountRaw, token)} to ${shortAddress(recipient)}${gasNote}`,
+      summary: `${t(lang, 'tb.summarySend', {
+        amount: formatTokenAmount(amountRaw, token),
+        address: shortAddress(recipient),
+      })}${gasNote}`,
       token,
       amountRaw,
       counterparty: recipient,
@@ -193,13 +205,13 @@ async function buildSend(
   if (amount?.all) {
     amountRaw = await deps.reader.erc20BalanceOf(token.address, from);
     if (amountRaw === 0n) {
-      throw new BuildError(`You do not have any ${token.symbol} to send.`);
+      throw new BuildError(t(lang, 'tb.noTokenBalance', { symbol: token.symbol }));
     }
   } else if (amount?.value !== undefined) {
-    amountRaw = parseUserAmount(amount.value, token);
+    amountRaw = parseUserAmount(amount.value, token, lang);
   } else {
     throw new BuildError(
-      `How much ${token.symbol} do you want to send? Add an amount, like "send 10 ${token.symbol}".`,
+      t(lang, 'tb.howMuchToken', { symbol: token.symbol }),
     );
   }
   return {
@@ -212,7 +224,10 @@ async function buildSend(
     }),
     value: 0n,
     kind: 'erc20-transfer',
-    summary: `Send ${formatTokenAmount(amountRaw, token)} to ${shortAddress(recipient)}`,
+    summary: t(lang, 'tb.summarySend', {
+      amount: formatTokenAmount(amountRaw, token),
+      address: shortAddress(recipient),
+    }),
     token,
     amountRaw,
     counterparty: recipient,
@@ -227,16 +242,15 @@ async function buildApprove(
   intent: ParsedIntent,
   from: Address,
   deps: BuildDeps,
+  lang: Lang,
 ): Promise<PreparedTx> {
-  const token = await resolveToken(intent.token, deps);
+  const token = await resolveToken(intent.token, deps, lang);
   if (token.address === null) {
     throw new BuildError(
-      'MON itself cannot be approved — approvals are a token feature. ' +
-        'MON is the native coin: it only moves when you send it. ' +
-        'Name a token instead, like "approve 100 tUSD for 0x…".',
+      t(lang, 'tb.approveNativeMon'),
     );
   }
-  const spender = requireCounterparty(intent, 'spender');
+  const spender = requireCounterparty(intent, 'spender', lang);
   const amount = intent.amount;
 
   if (amount?.unlimited) {
@@ -250,7 +264,10 @@ async function buildApprove(
       }),
       value: 0n,
       kind: 'erc20-approve',
-      summary: `Allow ${shortAddress(spender)} to spend ALL of your ${token.symbol} (unlimited)`,
+      summary: t(lang, 'tb.summaryApproveAll', {
+        spender: shortAddress(spender),
+        symbol: token.symbol,
+      }),
       token,
       amountRaw: MAX_UINT256,
       counterparty: spender,
@@ -259,12 +276,14 @@ async function buildApprove(
 
   if (amount?.value === undefined) {
     throw new BuildError(
-      `How much ${token.symbol} should ${shortAddress(spender)} be allowed to spend? ` +
-        'Give an amount, or say "unlimited".',
+      t(lang, 'tb.approveHowMuch', {
+        symbol: token.symbol,
+        spender: shortAddress(spender),
+      }),
     );
   }
 
-  const amountRaw = parseUserAmount(amount.value, token);
+  const amountRaw = parseUserAmount(amount.value, token, lang);
 
   // Approving 0 is really a revoke — build it as one so the UI says so.
   if (amountRaw === 0n) {
@@ -278,9 +297,10 @@ async function buildApprove(
       }),
       value: 0n,
       kind: 'erc20-revoke',
-      summary:
-        `Revoke ${shortAddress(spender)}'s access to your ${token.symbol} ` +
-        '(approving 0 removes their access)',
+      summary: t(lang, 'tb.summaryRevokeZero', {
+        spender: shortAddress(spender),
+        symbol: token.symbol,
+      }),
       token,
       amountRaw: 0n,
       counterparty: spender,
@@ -297,7 +317,10 @@ async function buildApprove(
     }),
     value: 0n,
     kind: 'erc20-approve',
-    summary: `Allow ${shortAddress(spender)} to spend up to ${formatTokenAmount(amountRaw, token)}`,
+    summary: t(lang, 'tb.summaryApprove', {
+      spender: shortAddress(spender),
+      amount: formatTokenAmount(amountRaw, token),
+    }),
     token,
     amountRaw,
     counterparty: spender,
@@ -312,16 +335,15 @@ async function buildRevoke(
   intent: ParsedIntent,
   from: Address,
   deps: BuildDeps,
+  lang: Lang,
 ): Promise<PreparedTx> {
-  const token = await resolveToken(intent.token, deps);
+  const token = await resolveToken(intent.token, deps, lang);
   if (token.address === null) {
     throw new BuildError(
-      'Which token do you want to revoke access to? MON itself cannot be ' +
-        'approved, so there is no MON access to revoke — name the token, ' +
-        'like "revoke tUSD access for 0x…".',
+      t(lang, 'tb.revokeNativeMon'),
     );
   }
-  const spender = requireCounterparty(intent, 'spender');
+  const spender = requireCounterparty(intent, 'spender', lang);
   return {
     from,
     to: token.address,
@@ -332,7 +354,10 @@ async function buildRevoke(
     }),
     value: 0n,
     kind: 'erc20-revoke',
-    summary: `Revoke ${shortAddress(spender)}'s access to your ${token.symbol}`,
+    summary: t(lang, 'tb.summaryRevoke', {
+      spender: shortAddress(spender),
+      symbol: token.symbol,
+    }),
     token,
     amountRaw: 0n,
     counterparty: spender,
@@ -344,9 +369,9 @@ async function buildRevoke(
 /* ------------------------------------------------------------------ */
 
 /** The WMON contract address, or a plain-language failure where none exists. */
-function requireWmon(deps: BuildDeps): Address {
+function requireWmon(deps: BuildDeps, lang: Lang): Address {
   if (deps.wmon === undefined) {
-    throw new BuildError('Wrapping is not available on this network yet.');
+    throw new BuildError(t(lang, 'tb.wrapUnavailable'));
   }
   return deps.wmon;
 }
@@ -359,22 +384,22 @@ async function buildWrap(
   intent: ParsedIntent,
   from: Address,
   deps: BuildDeps,
+  lang: Lang,
 ): Promise<PreparedTx> {
-  const wmon = requireWmon(deps);
+  const wmon = requireWmon(deps, lang);
   const amount = intent.amount;
 
   if (amount?.all) {
     throw new BuildError(
-      'Wrapping your entire balance would leave no MON to pay the network fee ' +
-        'with, so the transaction would fail. Pick a number instead, like "wrap 1 MON".',
+      t(lang, 'tb.wrapAllFails'),
     );
   }
   if (amount?.value === undefined) {
     throw new BuildError(
-      'How much MON do you want to wrap? Add an amount, like "wrap 1 MON".',
+      t(lang, 'tb.wrapHowMuch'),
     );
   }
-  const amountRaw = parseUserAmount(amount.value, NATIVE_MON);
+  const amountRaw = parseUserAmount(amount.value, NATIVE_MON, lang);
 
   return {
     from,
@@ -383,7 +408,9 @@ async function buildWrap(
     data: encodeFunctionData({ abi: WMON_ABI, functionName: 'deposit' }),
     value: amountRaw,
     kind: 'wrap',
-    summary: `Wrap ${formatTokenAmount(amountRaw, NATIVE_MON)} into WMON`,
+    summary: t(lang, 'tb.summaryWrap', {
+      amount: formatTokenAmount(amountRaw, NATIVE_MON),
+    }),
     token: wmonToken(wmon),
     amountRaw,
     counterparty: wmon,
@@ -394,8 +421,9 @@ async function buildUnwrap(
   intent: ParsedIntent,
   from: Address,
   deps: BuildDeps,
+  lang: Lang,
 ): Promise<PreparedTx> {
-  const wmon = requireWmon(deps);
+  const wmon = requireWmon(deps, lang);
   const token = wmonToken(wmon);
   const amount = intent.amount;
 
@@ -403,13 +431,13 @@ async function buildUnwrap(
   if (amount?.all) {
     amountRaw = await deps.reader.erc20BalanceOf(wmon, from);
     if (amountRaw === 0n) {
-      throw new BuildError('You do not have any WMON to unwrap.');
+      throw new BuildError(t(lang, 'tb.unwrapEmpty'));
     }
   } else if (amount?.value !== undefined) {
-    amountRaw = parseUserAmount(amount.value, token);
+    amountRaw = parseUserAmount(amount.value, token, lang);
   } else {
     throw new BuildError(
-      'How much WMON do you want to unwrap? Add an amount, like "unwrap 2 WMON", or say "all".',
+      t(lang, 'tb.unwrapHowMuch'),
     );
   }
 
@@ -423,7 +451,9 @@ async function buildUnwrap(
     }),
     value: 0n,
     kind: 'unwrap',
-    summary: `Unwrap ${formatTokenAmount(amountRaw, token)} back to MON`,
+    summary: t(lang, 'tb.summaryUnwrap', {
+      amount: formatTokenAmount(amountRaw, token),
+    }),
     token,
     amountRaw,
     counterparty: wmon,
@@ -435,21 +465,19 @@ async function buildUnwrap(
 /* apps. We keep the fields as pasted, only validating shape.          */
 /* ------------------------------------------------------------------ */
 
-function buildRaw(intent: ParsedIntent, from: Address): PreparedTx {
+function buildRaw(intent: ParsedIntent, from: Address, lang: Lang): PreparedTx {
   const raw = intent.raw;
   if (!raw) {
     throw new BuildError(
-      'Paste the transaction details (at least the "to" address) and I will ' +
-        'explain it before you sign.',
+      t(lang, 'tb.rawMissing'),
     );
   }
-  const to = checksum(raw.to, '"to" address');
+  const to = checksum(raw.to, t(lang, 'tb.what.to'), lang);
 
   const data = raw.data === undefined || raw.data === '' ? '0x' : raw.data;
   if (!isHexData(data)) {
     throw new BuildError(
-      'The transaction data is not valid — it should be "0x" followed by ' +
-        'pairs of hex characters (0-9, a-f). Copy it again from the source app.',
+      t(lang, 'tb.rawBadData'),
     );
   }
 
@@ -457,21 +485,20 @@ function buildRaw(intent: ParsedIntent, from: Address): PreparedTx {
     from,
     to,
     data,
-    value: parseRawValue(raw.value),
+    value: parseRawValue(raw.value, lang),
     kind: 'raw',
-    summary: `Custom transaction to ${shortAddress(to)}`,
+    summary: t(lang, 'tb.summaryRaw', { address: shortAddress(to) }),
   };
 }
 
 /** "0x…" → hex wei; decimal string → MON units; missing → 0. */
-function parseRawValue(value: string | undefined): bigint {
+function parseRawValue(value: string | undefined, lang: Lang): bigint {
   if (value === undefined || value.trim() === '') return 0n;
   const text = value.trim();
   if (text.startsWith('0x') || text.startsWith('0X')) {
     if (!/^0[xX][0-9a-fA-F]+$/.test(text)) {
       throw new BuildError(
-        'The transaction value looks like hex but is not valid — it should ' +
-          'be "0x" followed by hex characters (0-9, a-f).',
+        t(lang, 'tb.rawBadValue'),
       );
     }
     return BigInt(text);
@@ -480,7 +507,7 @@ function parseRawValue(value: string | undefined): bigint {
     return parseAmount(text, 18);
   } catch (err) {
     throw new BuildError(
-      err instanceof Error ? err.message : `"${text}" is not a valid amount of MON.`,
+      err instanceof Error ? err.message : t(lang, 'tb.rawBadAmount', { value: text }),
     );
   }
 }

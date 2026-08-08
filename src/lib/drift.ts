@@ -15,6 +15,8 @@
  */
 
 import type { ApprovalChange, AssetChange, SimulationResult, TokenInfo } from './types';
+import { t } from './i18n';
+import type { Lang } from './i18n';
 
 /* ------------------------------------------------------------------ */
 /* Public contract                                                     */
@@ -38,18 +40,24 @@ export interface CompareOptions {
   nowMs: number;
   /** Renders a raw amount as human text, e.g. "0.5 MON". */
   formatToken: FormatTokenFn;
+  /** UI language for the friendly report. */
+  lang?: Lang;
 }
 
 /* ------------------------------------------------------------------ */
 /* Fixed copy                                                          */
 /* ------------------------------------------------------------------ */
 
-const HEADLINES: Record<DriftLevel, string> = {
-  material:
-    'The chain moved while you were reading — this transaction no longer does the same thing.',
-  cosmetic: 'Only the network fee estimate moved. What the transaction does is unchanged.',
-  none: 'Nothing changed — the plan is still accurate.',
-};
+function headlineFor(level: DriftLevel, lang: Lang): string {
+  switch (level) {
+    case 'material':
+      return t(lang, 'drift.headline.material');
+    case 'cosmetic':
+      return t(lang, 'drift.headline.cosmetic');
+    case 'none':
+      return t(lang, 'drift.headline.none');
+  }
+}
 
 /* ------------------------------------------------------------------ */
 /* Small helpers                                                       */
@@ -132,28 +140,48 @@ function directionWord(delta: bigint): 'send' | 'receive' {
 /* Change lines                                                        */
 /* ------------------------------------------------------------------ */
 
-function describeAmountShift(a: AssetChange, b: AssetChange, formatToken: FormatTokenFn): string {
+function describeAmountShift(
+  a: AssetChange,
+  b: AssetChange,
+  formatToken: FormatTokenFn,
+  lang: Lang,
+): string {
   const wasVerb = directionWord(a.deltaRaw);
   const nowVerb = directionWord(b.deltaRaw);
   const beforeAmount = formatToken(absBig(a.deltaRaw), a.token);
   const afterAmount = formatToken(absBig(b.deltaRaw), b.token);
   if (wasVerb !== nowVerb) {
-    return `Before you would ${wasVerb} ${beforeAmount}; now you would ${nowVerb} ${afterAmount}.`;
+    return t(lang, 'drift.amountFlip', {
+      wasVerb: t(lang, wasVerb === 'send' ? 'drift.verbSend' : 'drift.verbReceive'),
+      beforeAmount,
+      nowVerb: t(lang, nowVerb === 'send' ? 'drift.verbSend' : 'drift.verbReceive'),
+      afterAmount,
+    });
   }
-  return `You would now ${nowVerb} ${afterAmount} instead of ${beforeAmount}.`;
+  return t(lang, 'drift.amountShift', {
+    nowVerb: t(lang, nowVerb === 'send' ? 'drift.verbSend' : 'drift.verbReceive'),
+    afterAmount,
+    beforeAmount,
+  });
 }
 
-function describeAssetAppeared(b: AssetChange, formatToken: FormatTokenFn): string {
+function describeAssetAppeared(b: AssetChange, formatToken: FormatTokenFn, lang: Lang): string {
   const amount = formatToken(absBig(b.deltaRaw), b.token);
   return b.deltaRaw < 0n
-    ? `A payment of ${amount} from ${shortAddr(b.party)} is now part of this transaction.`
-    : `A payment of ${amount} to ${shortAddr(b.party)} is now part of this transaction.`;
+    ? t(lang, 'drift.paymentFromAppeared', {
+        amount,
+        party: shortAddr(b.party),
+      })
+    : t(lang, 'drift.paymentToAppeared', {
+        amount,
+        party: shortAddr(b.party),
+      });
 }
 
-function describeAssetDisappeared(a: AssetChange): string {
+function describeAssetDisappeared(a: AssetChange, lang: Lang): string {
   return a.deltaRaw < 0n
-    ? `A payment from ${shortAddr(a.party)} is no longer part of this transaction.`
-    : `A payment to ${shortAddr(a.party)} is no longer part of this transaction.`;
+    ? t(lang, 'drift.paymentFromGone', { party: shortAddr(a.party) })
+    : t(lang, 'drift.paymentToGone', { party: shortAddr(a.party) });
 }
 
 /* ------------------------------------------------------------------ */
@@ -165,7 +193,7 @@ export function compareSimulations(
   after: SimulationResult,
   opts: CompareOptions,
 ): DriftReport {
-  const { formatToken } = opts;
+  const { formatToken, lang = 'en' } = opts;
   // Anything in materialLines changes what the user is agreeing to.
   const materialLines: string[] = [];
   // Cosmetic lines are still shown, but never change the level past 'cosmetic'.
@@ -175,8 +203,8 @@ export function compareSimulations(
   if (before.ok !== after.ok) {
     materialLines.push(
       after.ok
-        ? 'This transaction would now go through, where before it would have failed.'
-        : 'This transaction would now fail, where before it would have gone through.',
+        ? t(lang, 'drift.wouldGoThrough')
+        : t(lang, 'drift.wouldFail'),
     );
   }
 
@@ -188,11 +216,11 @@ export function compareSimulations(
     const a = beforeAssets.get(key);
     const b = afterAssets.get(key);
     if (a && !b) {
-      materialLines.push(describeAssetDisappeared(a));
+      materialLines.push(describeAssetDisappeared(a, lang));
     } else if (!a && b) {
-      materialLines.push(describeAssetAppeared(b, formatToken));
+      materialLines.push(describeAssetAppeared(b, formatToken, lang));
     } else if (a && b && a.deltaRaw !== b.deltaRaw && movedOverOnePercent(a.deltaRaw, b.deltaRaw)) {
-      materialLines.push(describeAmountShift(a, b, formatToken));
+      materialLines.push(describeAmountShift(a, b, formatToken, lang));
     }
     // A wobble of 1% or less is the same plan for all practical purposes —
     // it neither makes the report material nor earns a line.
@@ -207,26 +235,44 @@ export function compareSimulations(
     const b = afterApprovals.get(key);
     if (a && !b) {
       materialLines.push(
-        `The approval letting ${shortAddr(a.spender)} spend your ${a.token.symbol} is no longer part of this transaction.`,
+        t(lang, 'drift.approvalGone', {
+          spender: shortAddr(a.spender),
+          symbol: a.token.symbol,
+        }),
       );
     } else if (!a && b) {
-      const scope = b.unlimited
-        ? `an unlimited amount of your ${b.token.symbol}`
-        : `up to ${formatToken(b.amountRaw, b.token)} of yours`;
-      materialLines.push(
-        `A new approval is now part of this transaction: it would let ${shortAddr(b.spender)} spend ${scope}.`,
-      );
+      if (b.unlimited) {
+        materialLines.push(
+          t(lang, 'drift.approvalNewUnlimited', {
+            spender: shortAddr(b.spender),
+            symbol: b.token.symbol,
+          }),
+        );
+      } else {
+        materialLines.push(
+          t(lang, 'drift.approvalNewCapped', {
+            spender: shortAddr(b.spender),
+            amount: formatToken(b.amountRaw, b.token),
+          }),
+        );
+      }
     } else if (a && b) {
       if (a.unlimited !== b.unlimited) {
         materialLines.push(
           b.unlimited
-            ? 'The approval is now unlimited, where before it had a limit.'
-            : `The approval now has a limit of ${formatToken(b.amountRaw, b.token)}, where before it was unlimited.`,
+            ? t(lang, 'drift.approvalNowUnlimited')
+            : t(lang, 'drift.approvalNowCapped', {
+                amount: formatToken(b.amountRaw, b.token),
+              }),
         );
       } else if (!a.unlimited && a.amountRaw !== b.amountRaw) {
         // Both limited but the cap moved — that changes what is agreed to.
         materialLines.push(
-          `${shortAddr(b.spender)} could now spend up to ${formatToken(b.amountRaw, b.token)} instead of ${formatToken(a.amountRaw, a.token)}.`,
+          t(lang, 'drift.approvalCapMoved', {
+            spender: shortAddr(b.spender),
+            amount: formatToken(b.amountRaw, b.token),
+            before: formatToken(a.amountRaw, a.token),
+          }),
         );
       }
       // Both unlimited: the raw numbers may differ, but "everything" is
@@ -237,11 +283,11 @@ export function compareSimulations(
   /* ---- gas: cosmetic on its own ---- */
   if (before.gasUsed !== after.gasUsed || before.gasCostWei !== after.gasCostWei) {
     if (after.gasCostWei > before.gasCostWei) {
-      cosmeticLines.push('The network fee estimate went up.');
+      cosmeticLines.push(t(lang, 'drift.gasUp'));
     } else if (after.gasCostWei < before.gasCostWei) {
-      cosmeticLines.push('The network fee estimate went down.');
+      cosmeticLines.push(t(lang, 'drift.gasDown'));
     } else {
-      cosmeticLines.push('The network fee estimate moved slightly.');
+      cosmeticLines.push(t(lang, 'drift.gasMoved'));
     }
   }
 
@@ -250,9 +296,7 @@ export function compareSimulations(
     before.notes.length !== after.notes.length ||
     before.notes.some((note, i) => note !== after.notes[i]);
   if (notesDiffer) {
-    cosmeticLines.push(
-      'Some background notes changed; they do not affect what the transaction does.',
-    );
+    cosmeticLines.push(t(lang, 'drift.notesChanged'));
   }
 
   const level: DriftLevel =
@@ -260,7 +304,7 @@ export function compareSimulations(
 
   return {
     level,
-    headline: HEADLINES[level],
+    headline: headlineFor(level, lang),
     changes: [...materialLines, ...cosmeticLines],
     staleSeconds: Math.max(0, Math.round((opts.nowMs - opts.simulatedAtMs) / 1000)),
   };
