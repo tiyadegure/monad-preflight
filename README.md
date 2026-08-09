@@ -125,7 +125,6 @@ npm run deploy:token
 - ~~Risk API~~ — **已发布**为参考 worker：[docs/risk-api.md](docs/risk-api.md)。仍待做：生产级加固（鉴权、配额、缓存）并落地首个集成伙伴
 - *发送*批量交易（EIP-5792 `wallet_sendCalls`）——批量*解释器*已发布；组合与提交尚未完成
 - 超出近期区块窗口的历史授权扫描（基于索引器）
-- 把生成的叙述（风险发现、解释、模拟说明）翻译成中文——UI 界面今天已完全双语
 - 内置 Monad 蓝筹代币（USDe、sUSDe…）的权威代币注册表，让符号伪装防护零配置生效——刻意延后，等新部署的地址稳定并能在链上交叉验证之后；错误的权威条目比没有更糟
 - Aave v3 动词解码（supply / withdraw / borrow / repay），让 Monad 上流量最高的 DeFi 流程以自然语言呈现，而不是「不可读的原始调用」
 
